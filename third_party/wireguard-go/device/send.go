@@ -6,9 +6,12 @@
 package device
 
 import (
+	"bytes"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/netip"
 	"os"
@@ -201,18 +204,51 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 		return err
 	}
 
-	buf := make([]byte, MessageEncapsulatingTransportSize+MessageInitiationSize)
-	packet := buf[MessageEncapsulatingTransportSize:]
-	_ = msg.marshal(packet)
+	var sendBuffer [][]byte
+
+	for _, ipacket := range peer.device.ipackets {
+		if ipacket != nil {
+			buf := make([]byte, ipacket.ObfuscatedLen(0))
+			ipacket.Obfuscate(buf, nil)
+			sendBuffer = append(sendBuffer, buf)
+		}
+	}
+
+	jc := peer.device.junk.count
+	jmin := peer.device.junk.min
+	jmax := peer.device.junk.max
+
+	for i := 0; i < jc; i++ {
+		nBig, _ := rand.Int(rand.Reader, big.NewInt(int64(jmax-jmin+1)))
+		n := int(nBig.Int64()) + jmin
+
+		buf := make([]byte, n)
+		rand.Read(buf)
+		sendBuffer = append(sendBuffer, buf)
+	}
+
+	var buf [MessageInitiationSize]byte
+	writer := bytes.NewBuffer(buf[:0])
+	binary.Write(writer, binary.LittleEndian, msg)
+	packet := writer.Bytes()
 	peer.cookieGenerator.AddMacs(packet)
 
 	peer.timersAnyAuthenticatedPacketTraversal()
 	peer.timersAnyAuthenticatedPacketSent()
 
+	if padding := peer.device.paddings.init; padding > 0 {
+		buf := make([]byte, padding+len(packet))
+		rand.Read(buf[:padding])
+		copy(buf[padding:], packet)
+		packet = buf
+	}
+
+	sendBuffer = append(sendBuffer, packet)
+
 	if len(candidates) > 0 {
-		err = peer.sendHandshakeBuffers([][]byte{buf}, candidates)
+		err = peer.sendHandshakeBuffers(sendBuffer, candidates)
 	} else {
-		err = peer.SendBuffers([][]byte{buf})
+		err = peer.SendBuffers(sendBuffer)
 	}
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to send handshake initiation: %v", peer, err)
@@ -235,9 +271,11 @@ func (peer *Peer) SendHandshakeResponse() error {
 		return err
 	}
 
-	buf := make([]byte, MessageEncapsulatingTransportSize+MessageResponseSize)
-	packet := buf[MessageEncapsulatingTransportSize:]
-	_ = response.marshal(packet)
+	var buf [MessageResponseSize]byte
+	writer := bytes.NewBuffer(buf[:0])
+
+	binary.Write(writer, binary.LittleEndian, response)
+	packet := writer.Bytes()
 	peer.cookieGenerator.AddMacs(packet)
 
 	err = peer.BeginSymmetricSession()
@@ -250,8 +288,15 @@ func (peer *Peer) SendHandshakeResponse() error {
 	peer.timersAnyAuthenticatedPacketTraversal()
 	peer.timersAnyAuthenticatedPacketSent()
 
+	if padding := peer.device.paddings.response; padding > 0 {
+		buf := make([]byte, padding+len(packet))
+		rand.Read(buf[:padding])
+		copy(buf[padding:], packet)
+		packet = buf
+	}
+
 	// TODO: allocation could be avoided
-	err = peer.SendBuffers([][]byte{buf})
+	err = peer.SendBuffers([][]byte{packet})
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to send handshake response: %v", peer, err)
 	}
@@ -262,18 +307,33 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 	device.log.Verbosef("Sending cookie response for denied handshake message for %v", initiatingElem.endpoint.DstToString())
 
 	sender := binary.LittleEndian.Uint32(initiatingElem.packet[4:8])
-	reply, err := device.cookieChecker.CreateReply(initiatingElem.packet, sender, initiatingElem.endpoint.DstToBytes())
+	msgType := device.headers.cookie.Generate()
+
+	reply, err := device.cookieChecker.CreateReply(
+		initiatingElem.packet,
+		sender,
+		initiatingElem.endpoint.DstToBytes(),
+		msgType,
+	)
 	if err != nil {
 		device.log.Errorf("Failed to create cookie reply: %v", err)
 		return err
 	}
 
-	buf := make([]byte, MessageEncapsulatingTransportSize+MessageCookieReplySize)
-	packet := buf[MessageEncapsulatingTransportSize:]
-	_ = reply.marshal(packet)
-	// TODO: allocation could be avoided
-	device.net.bind.Send([][]byte{buf}, initiatingElem.endpoint, MessageEncapsulatingTransportSize)
+	var buf [MessageCookieReplySize]byte
+	writer := bytes.NewBuffer(buf[:0])
+	binary.Write(writer, binary.LittleEndian, reply)
+	packet := writer.Bytes()
 
+	if padding := device.paddings.cookie; padding > 0 {
+		buf := make([]byte, padding+len(packet))
+		rand.Read(buf[:padding])
+		copy(buf[padding:], packet)
+		packet = buf
+	}
+
+	// TODO: allocation could be avoided
+	device.net.bind.Send([][]byte{packet}, initiatingElem.endpoint, 0)
 	return nil
 }
 
@@ -693,7 +753,9 @@ func (device *Device) RoutineEncryption(id int) {
 			fieldReceiver := header[4:8]
 			fieldNonce := header[8:16]
 
-			binary.LittleEndian.PutUint32(fieldType, MessageTransportType)
+			msgType := device.headers.transport.Generate()
+
+			binary.LittleEndian.PutUint32(fieldType, msgType)
 			binary.LittleEndian.PutUint32(fieldReceiver, elem.keypair.remoteIndex)
 			binary.LittleEndian.PutUint64(fieldNonce, elem.nonce)
 
@@ -710,9 +772,6 @@ func (device *Device) RoutineEncryption(id int) {
 				elem.packet,
 				nil,
 			)
-
-			// re-slice packet to include encapsulating transport space
-			elem.packet = elem.buffer[:MessageEncapsulatingTransportSize+len(elem.packet)]
 		}
 		elemsContainer.filling.Done()
 	}
@@ -781,6 +840,19 @@ func (peer *Peer) processOutboundContainer(elemsContainer *QueueOutboundElements
 		if len(elem.packet[MessageEncapsulatingTransportSize:]) != MessageKeepaliveSize {
 			dataSent = true
 		}
+		// lx:begin awg (SPEC 025 — AmneziaWG transport padding, S4)
+		// Prepend `transport` random bytes ahead of the transport header. The AWG
+		// path zeroes MessageEncapsulatingTransportSize (see noise-protocol.go), so
+		// elem.packet starts at buffer offset 0 and this shift is what creates the
+		// prefix; the buffer is allocated with PaddingMultiple headroom.
+		if padding := device.paddings.transport; padding > 0 {
+			for i := len(elem.packet) - 1; i >= 0; i-- {
+				elem.buffer[i+padding] = elem.buffer[i]
+			}
+			rand.Read(elem.buffer[:padding])
+			elem.packet = elem.buffer[:padding+len(elem.packet)]
+		}
+		// lx:end awg
 		scratch = append(scratch, elem.packet)
 	}
 
