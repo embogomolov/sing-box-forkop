@@ -217,6 +217,11 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 	jc := peer.device.junk.count
 	jmin := peer.device.junk.min
 	jmax := peer.device.junk.max
+	if jmax < jmin {
+		// UAPI validates jmin/jmax only individually; a swapped pair
+		// would panic rand.Int below with a non-positive bound.
+		jmin, jmax = jmax, jmin
+	}
 
 	for i := 0; i < jc; i++ {
 		nBig, _ := rand.Int(rand.Reader, big.NewInt(int64(jmax-jmin+1)))
@@ -524,7 +529,9 @@ func (device *Device) InputPacket(destination []byte, packetSlices [][]byte) {
 	for _, packetSlice := range packetSlices {
 		totalLength += len(packetSlice)
 	}
-	allocLength := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + totalLength + PaddingMultiple + chacha20poly1305.Overhead
+	// paddings.transport (AWG s4) is prepended in-buffer by
+	// RoutineSequentialSender; reserve headroom for the shift.
+	allocLength := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + totalLength + PaddingMultiple + chacha20poly1305.Overhead + device.paddings.transport
 	if allocLength > MaxMessageSize {
 		return
 	}
@@ -570,7 +577,9 @@ func (device *Device) InputPackets(packets []*InputPacketRef) []*InputPacketRef 
 		for _, packetSlice := range packetRef.PacketSlices {
 			totalLength += len(packetSlice)
 		}
-		allocLength := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + totalLength + PaddingMultiple + chacha20poly1305.Overhead
+		// paddings.transport (AWG s4) is prepended in-buffer by
+		// RoutineSequentialSender; reserve headroom for the shift.
+		allocLength := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + totalLength + PaddingMultiple + chacha20poly1305.Overhead + device.paddings.transport
 		if allocLength > MaxMessageSize {
 			continue
 		}
