@@ -275,7 +275,7 @@ again:
 				return 0, err
 			}
 			sizes[0] = dataLength
-			if dataLength > 3 {
+			if dataLength > 3 && s.hasReserved() { // lx: SPEC 026 — gate reserved-clear on the egress receive path too, so a small-padding AmneziaWG magic in bytes 1-3 survives when no WARP reserved value is set
 				common.ClearArray(bufs[0][1:4])
 			}
 			endpoints[0] = &StdNetEndpoint{AddrPort: source}
