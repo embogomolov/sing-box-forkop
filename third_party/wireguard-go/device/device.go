@@ -124,6 +124,23 @@ type Device struct {
 	}
 
 	ipackets [5]*obfChain
+
+	// lx: SPEC 041 — passive self-heal on handshake give-up. When a peer's
+	// handshake retry cycle exhausts (the give-up branch of
+	// expiredRetransmitHandshake), the device reopens its bind once — with a
+	// fresh ephemeral port when freshPort is set — and immediately
+	// re-initiates. Heals dead per-flow path state (an expired NAT mapping or
+	// a poisoned DPI flow entry) that otherwise pins every retry to the same
+	// dead 5-tuple until a manual reconnect. Zero cost while healthy: no
+	// timers, no goroutines — the trigger is the existing give-up event,
+	// which only fires under traffic demand after ~90s of unanswered
+	// initiations. Enabled by default; sing-box decides freshPort from
+	// whether the user pinned listen_port.
+	giveUpRebind struct {
+		enabled   atomic.Bool
+		freshPort atomic.Bool
+		last      atomic.Int64 // unix seconds of the last rebind (debounce)
+	}
 }
 
 // deviceState represents the state of a Device.
@@ -328,6 +345,7 @@ func (device *Device) SetPrivateKey(sk NoisePrivateKey) error {
 func NewDevice(ctx context.Context, tunDevice tun.Device, bind conn.Bind, logger *Logger, workers int) *Device {
 	device := new(Device)
 	device.pauseManager = service.FromContext[pause.Manager](ctx)
+	device.giveUpRebind.enabled.Store(true) // lx: SPEC 041 — self-heal on by default
 	device.state.state.Store(uint32(deviceStateDown))
 	device.closed = make(chan struct{})
 	device.log = logger
@@ -835,6 +853,55 @@ func (device *Device) BindUpdate() error {
 
 	device.log.Verbosef("UDP bind has been updated")
 	return nil
+}
+
+// lx: SPEC 041 — configure the handshake give-up self-heal (see the
+// giveUpRebind field comment). freshPort must be false when the user pinned
+// an explicit listen_port: the pinned port is preserved, at the cost of the
+// rebind not changing the 5-tuple.
+func (device *Device) SetGiveUpRebind(enabled, freshPort bool) {
+	device.giveUpRebind.enabled.Store(enabled)
+	device.giveUpRebind.freshPort.Store(freshPort)
+}
+
+// lx: SPEC 041 — invoked from the give-up branch of
+// expiredRetransmitHandshake: ~90s of initiations went unanswered, so the
+// current socket's 5-tuple is proven dead. Reopen the bind (fresh ephemeral
+// port when allowed) and kick a new handshake cycle immediately. Runs the
+// heavy part in a goroutine so the timer callback never blocks on
+// BindUpdate's worker drain. Debounced to one rebind per RekeyAttemptTime
+// per device (CAS on `last` settles concurrent multi-peer give-ups). On a
+// down or closed device BindUpdate does not reopen the socket, so a rebind
+// racing idle-suspend (SPEC 020) or Close degrades to a no-op.
+func (device *Device) handleHandshakeGiveUp(peer *Peer) {
+	if !device.giveUpRebind.enabled.Load() {
+		return
+	}
+	if device.isClosed() {
+		return
+	}
+	now := time.Now().Unix()
+	last := device.giveUpRebind.last.Load()
+	if now-last < int64(RekeyAttemptTime/time.Second) {
+		return
+	}
+	if !device.giveUpRebind.last.CompareAndSwap(last, now) {
+		return
+	}
+	fresh := device.giveUpRebind.freshPort.Load()
+	go func() {
+		if fresh {
+			device.net.Lock()
+			device.net.port = 0
+			device.net.Unlock()
+		}
+		if err := device.BindUpdate(); err != nil {
+			device.log.Errorf("%v - Failed to rebind after handshake give-up: %v", peer, err)
+			return
+		}
+		device.log.Verbosef("%v - Rebound socket after handshake give-up (fresh port=%v)", peer, fresh)
+		peer.SendHandshakeInitiation(false)
+	}()
 }
 
 func (device *Device) BindClose() error {

@@ -99,6 +99,14 @@ func expiredRetransmitHandshake(peer *Peer) {
 			peer.timers.zeroKeyMaterial.Mod(RejectAfterTime * 3)
 		}
 		peer.noteSessionHandshakeStopped()
+
+		/* lx: SPEC 041 — the exhausted cycle just proved the current socket's
+		 * 5-tuple dead (90s of initiations, zero replies). Rebind once and
+		 * re-initiate, so a stale NAT mapping / poisoned DPI flow entry cannot
+		 * pin this peer to a dead socket until a manual reconnect. Runs after
+		 * the session-state notification so a consumer sees "handshake stopped"
+		 * before the socket is recreated. */
+		peer.device.handleHandshakeGiveUp(peer)
 	} else {
 		peer.timers.handshakeAttempts.Add(1)
 		peer.device.log.Verbosef("%s - Handshake did not complete after %d seconds, retrying (try %d)", peer, int(RekeyTimeout.Seconds()), peer.timers.handshakeAttempts.Load()+1)
