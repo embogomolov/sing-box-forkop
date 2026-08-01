@@ -111,6 +111,13 @@ func expiredRetransmitHandshake(peer *Peer) {
 		peer.timers.handshakeAttempts.Add(1)
 		peer.device.log.Verbosef("%s - Handshake did not complete after %d seconds, retrying (try %d)", peer, int(RekeyTimeout.Seconds()), peer.timers.handshakeAttempts.Load()+1)
 
+		/* lx: SPEC 041 v2 — early self-heal: >=3 unanswered initiations against
+		 * a provably dead session (no live keypair, or last handshake older
+		 * than RejectAfterTime) prove the 5-tuple dead without waiting out the
+		 * full cycle. Rebind now (debounced with the give-up trigger below);
+		 * the retry cycle itself continues untouched. */
+		peer.device.maybeEarlyGiveUpRebind(peer)
+
 		/* We clear the endpoint address src address, in case this is the cause of trouble. */
 		peer.markEndpointSrcForClearing()
 
