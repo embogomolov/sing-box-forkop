@@ -152,6 +152,18 @@ func handleConnecting(ep *Endpoint) {
 		ep.mu.Unlock()
 		return
 	}
+	// lx:begin handshake-nil-guard (sing-box-lx SPECS/TASKS/048)
+	// listenContext.performHandshake zeroes ep.h and releases ep.mu before
+	// calling ep.Close(); the state only changes later, inside closeLocked.
+	// A segment arriving in that window wakes handleConnecting, whose gate
+	// above checks the state but not h, so every ep.h dereference below —
+	// processSegments, listenEP in the error branch, and deliverAccepted —
+	// runs on a nil handshake and takes down the whole process.
+	if ep.h == nil {
+		ep.mu.Unlock()
+		return
+	}
+	// lx:end handshake-nil-guard
 	if err := ep.h.processSegments(); err != nil {
 		// handshake failed. clean up the tcp endpoint and handshake
 		// state.
