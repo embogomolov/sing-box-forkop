@@ -213,6 +213,8 @@ func run() error {
 				}
 				return nil
 			}
+			instance = nil
+			runtimeDebug.FreeOSMemory()
 			break
 		}
 		options, err = readConfigAndMerge()
