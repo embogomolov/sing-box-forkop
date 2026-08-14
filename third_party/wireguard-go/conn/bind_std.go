@@ -199,21 +199,41 @@ again:
 	var v4pc *ipv4.PacketConn
 	var v6pc *ipv6.PacketConn
 
+	// lx: SPEC 069 — a per-family bind failure means "this family is
+	// unavailable here", not "abort the whole bind": keep the sibling socket
+	// instead of failing Open. Upstream only tolerated EAFNOSUPPORT; on
+	// Windows the external control (interface bind via IPV6_UNICAST_IF)
+	// fails with WSAEINVAL when the default adapter has IPv6 unchecked, and
+	// that error used to close the already-open v4 socket — with BindUpdate
+	// having closed the old bind first, the device was left with no sockets
+	// at all. See bindFamilyUnavailable in lx_family_{default,windows}.go.
 	v4conn, port, err = listenNet(s.externalControl, "udp4", port)
-	if err != nil && !errors.Is(err, syscall.EAFNOSUPPORT) {
+	if err != nil && !bindFamilyUnavailable(err) {
 		return nil, 0, err
 	}
+	v4port := port // lx: SPEC 069 — survives the clobber below
 
 	// Listen on the same port as we're using for ipv4.
 	v6conn, port, err = listenNet(s.externalControl, "udp6", port)
 	if uport == 0 && errors.Is(err, syscall.EADDRINUSE) && tries < 100 {
-		v4conn.Close()
+		if v4conn != nil { // lx: SPEC 069 — v4 may have degraded away above
+			v4conn.Close()
+		}
 		tries++
 		goto again
 	}
-	if err != nil && !errors.Is(err, syscall.EAFNOSUPPORT) {
-		v4conn.Close()
-		return nil, 0, err
+	if err != nil {
+		if !bindFamilyUnavailable(err) {
+			if v4conn != nil { // lx: SPEC 069 — nil-guard, same reason
+				v4conn.Close()
+			}
+			return nil, 0, err
+		}
+		// lx: SPEC 069 — the failed v6 listen returned (nil, 0, err) and the
+		// multi-assignment above clobbered the surviving v4 socket's port
+		// with that 0; restore it (latent upstream defect on the
+		// EAFNOSUPPORT degradation path too).
+		port = v4port
 	}
 	var fns []ReceiveFunc
 	if v4conn != nil {
