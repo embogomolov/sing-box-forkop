@@ -124,9 +124,9 @@ func newStdNetPaddedPair(t *testing.T) (devA, devB *Device, tunA, tunB *chanTun)
 	if err := devB.IpcSet(cfgB); err != nil {
 		t.Fatalf("IpcSet B: %v", err)
 	}
-	if devA.paddings.init != 0 || devA.paddings.response != 0 || devA.paddings.transport != 0 {
+	if devA.paddings.init.Load() != 0 || devA.paddings.response.Load() != 0 || devA.paddings.transport.Load() != 0 {
 		t.Fatalf("padding must be 0 for this test: init=%d resp=%d transport=%d",
-			devA.paddings.init, devA.paddings.response, devA.paddings.transport)
+			devA.paddings.init.Load(), devA.paddings.response.Load(), devA.paddings.transport.Load())
 	}
 
 	if err := devA.Up(); err != nil {

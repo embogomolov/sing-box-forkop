@@ -40,14 +40,24 @@ func TestParseObfLen(t *testing.T) {
 }
 
 func TestMagicHeaderGenerateFullRange(t *testing.T) {
-	// end-start+1 computed in uint32 wraps to 0 for the full range and
-	// panics rand.Int; the fix widens to int64 before the arithmetic.
-	h := &magicHeader{start: 0, end: ^uint32(0)}
-	for i := 0; i < 8; i++ {
-		v := h.Generate()
-		if !h.Validate(v) {
+	// hi-lo+1 computed in uint32 wraps to 0 for the full range: the AWG 2.0
+	// magicHeader.Generate panicked rand.Int, the AWG 3.x UintRange.PickOne
+	// would degrade to a constant lo (fastrandn(0) == 0). The fix widens
+	// before the arithmetic; pin both "in range" and "not constant".
+	var h UintRange
+	h.FromUint32(0, ^uint32(0))
+	var nonZero int
+	for i := 0; i < 64; i++ {
+		v := h.PickOne()
+		if !h.Contains(v) {
 			t.Fatalf("generated value %d outside range", v)
 		}
+		if v != 0 {
+			nonZero++
+		}
+	}
+	if nonZero == 0 {
+		t.Fatal("full-range PickOne is constant 0: the uint32 wrap guard is gone")
 	}
 }
 

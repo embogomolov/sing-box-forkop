@@ -24,6 +24,10 @@ const (
 	CookieRefreshTime       = time.Second * 120
 	HandshakeInitationRate  = time.Second / 50
 	PaddingMultiple         = 16
+	// lx: AmneziaWG 3.x — the initial per-peer UDP window (largest datagram
+	// assumed deliverable before any has been observed); content padding and
+	// random trailers never grow a datagram past the window.
+	DefaultUdpWindow = 500
 )
 
 const (

@@ -33,6 +33,9 @@ type QueueInboundElement struct {
 	counter  uint64
 	keypair  *Keypair
 	endpoint conn.Endpoint
+	// lx: AmneziaWG — the transport padding (s4) this datagram arrived with;
+	// packet is buffer[padding:...], the padding is left in place.
+	padding uint32
 }
 
 type QueueInboundElementsContainer struct {
@@ -65,7 +68,7 @@ func (peer *Peer) keepKeyFreshReceiving() {
 		return
 	}
 	keypair := peer.keypairs.Current()
-	if keypair != nil && keypair.isInitiator && time.Since(keypair.created) > (RejectAfterTime-KeepaliveTimeout-RekeyTimeout) {
+	if keypair != nil && keypair.isInitiator && time.Since(keypair.created) > peer.device.keyRefreshTimeoutReceiving() {
 		peer.timers.sentLastMinuteHandshake.Store(true)
 		peer.SendHandshakeInitiation(false)
 	}
@@ -101,6 +104,7 @@ func (device *Device) RoutineReceiveIncoming(
 		endpoints   = make([]conn.Endpoint, maxBatchSize)
 		deathSpiral int
 		elemsByPeer = make(map[*Peer]*QueueInboundElementsContainer, maxBatchSize)
+		typeHashBuf [4]byte
 	)
 
 	for i := range bufsArrs {
@@ -148,11 +152,37 @@ func (device *Device) RoutineReceiveIncoming(
 			// check size of packet
 			packet := bufsArrs[i][:size]
 
+			// lx: AmneziaWG 3.x header protection — the keystream for this
+			// datagram is salted with its first 12 bytes (the S1–S4 padding);
+			// its first 4 bytes unmask the message type wherever it sits.
+			cip, err := device.HeaderProtectionCipher(packet)
+			if err != nil {
+				device.log.Errorf("Failed to initialize header cipher: %v", err)
+				continue
+			}
+
+			typeHash := typeHashBuf[:]
+			clear(typeHash)
+			if cip != nil {
+				cip.XORKeyStream(typeHash, typeHash)
+			}
+
 			// get message padding and type based on information from S1-S4 and H1-H4
-			msgType, padding := device.DeterminePacketTypeAndPadding(packet, MessageUnknownType)
-			if padding > 0 {
-				copy(packet, packet[padding:])
-				packet = packet[:len(packet)-padding]
+			msgSize, msgType, padding := device.DeterminePacketTypeAndPadding(packet, typeHash)
+			if msgType == MessageUnknownType {
+				device.log.Verbosef("Received message with unknown type")
+				continue
+			}
+
+			// strip the padding (left in place in the buffer) and, for the
+			// fixed-size handshake messages, the AWG 3.x random trailer
+			packet = packet[padding:]
+			if msgType != MessageTransportType {
+				packet = packet[:msgSize]
+			}
+
+			if cip != nil {
+				applyHash(packet[:4], packet[:4], typeHash)
 			}
 
 			switch msgType {
@@ -165,6 +195,9 @@ func (device *Device) RoutineReceiveIncoming(
 
 				if len(packet) < MessageTransportSize {
 					continue
+				}
+				if cip != nil {
+					cip.XORKeyStream(packet[4:MessageTransportHeaderSize], packet[4:MessageTransportHeaderSize])
 				}
 
 				// lookup key pair
@@ -180,7 +213,7 @@ func (device *Device) RoutineReceiveIncoming(
 
 				// check keypair expiry
 
-				if keypair.created.Add(RejectAfterTime).Before(time.Now()) {
+				if keypair.created.Add(device.keychainExpireTime()).Before(time.Now()) {
 					continue
 				}
 
@@ -192,6 +225,7 @@ func (device *Device) RoutineReceiveIncoming(
 				elem.keypair = keypair
 				elem.endpoint = endpoints[i]
 				elem.counter = 0
+				elem.padding = padding
 
 				elemsForPeer, ok := elemsByPeer[peer]
 				if !ok {
@@ -209,15 +243,24 @@ func (device *Device) RoutineReceiveIncoming(
 				if len(packet) != MessageInitiationSize {
 					continue
 				}
+				if cip != nil {
+					cip.XORKeyStream(packet[4:MessageInitiationSize], packet[4:MessageInitiationSize])
+				}
 
 			case MessageResponseType:
 				if len(packet) != MessageResponseSize {
 					continue
 				}
+				if cip != nil {
+					cip.XORKeyStream(packet[4:MessageResponseSize], packet[4:MessageResponseSize])
+				}
 
 			case MessageCookieReplyType:
 				if len(packet) != MessageCookieReplySize {
 					continue
+				}
+				if cip != nil {
+					cip.XORKeyStream(packet[4:MessageCookieReplySize], packet[4:MessageCookieReplySize])
 				}
 
 			default:
@@ -345,7 +388,10 @@ func (device *Device) RoutineHandshake(id int) {
 
 			// endpoints destination address is the source of the datagram
 
-			if device.IsUnderLoad() {
+			// lx: AmneziaWG 3.x disable_cookies — never answer with a cookie
+			// reply, and skip the under-load mac2/ratelimit gate that would
+			// demand one (upstream b5928ef).
+			if !device.disableCookies.Load() && device.IsUnderLoad() {
 
 				// verify MAC2 field
 
@@ -520,7 +566,14 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 		}
 		rxBytesLen += uint64(len(elem.packet) + MinMessageSize)
 
-		if len(elem.packet) == 0 {
+		// lx: AmneziaWG 3.x — a datagram the peer got through to us is a
+		// size this path carries; widen the UDP window accordingly.
+		peer.noteUDPWindow(elem.padding + MessageTransportSize + uint32(len(elem.packet)))
+
+		// lx: AmneziaWG 3.x — a keepalive may carry content padding / a
+		// trailer, all zeros; an IP packet never starts with a zero byte
+		// (version nibble), so a leading zero is a padded keepalive.
+		if len(elem.packet) == 0 || elem.packet[0] == 0 {
 			device.log.Verbosef("%v - Receiving keepalive packet", peer)
 			continue
 		}
@@ -567,7 +620,9 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 			continue
 		}
 
-		scratch = append(scratch, elem.buffer[:MessageTransportOffsetContent+len(elem.packet)])
+		// the plaintext sits behind the (untouched) padding and the header
+		start := int(elem.padding)
+		scratch = append(scratch, elem.buffer[start:start+MessageTransportOffsetContent+len(elem.packet)])
 	}
 
 	peer.rxBytes.Add(rxBytesLen)
@@ -592,56 +647,76 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 	}
 }
 
-func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType uint32) (uint32, int) {
-	size := len(packet)
+// lx:begin awg3 (AmneziaWG — ported from amneziawg-go v3 device/receive.go)
 
-	if expectedType == MessageUnknownType || expectedType == MessageInitiationType {
-		padding := device.paddings.init
-		header := device.headers.init
-
-		if size == padding+MessageInitiationSize {
-			data := packet[padding:]
-			if header.Validate(binary.LittleEndian.Uint32(data)) {
-				return MessageInitiationType, padding
-			}
-		}
+func applyHash(dst, src, hash []byte) {
+	for i := range len(dst) {
+		dst[i] = src[i] ^ hash[i]
 	}
-
-	if expectedType == MessageUnknownType || expectedType == MessageResponseType {
-		padding := device.paddings.response
-		header := device.headers.response
-
-		if size == padding+MessageResponseSize {
-			data := packet[padding:]
-			if header.Validate(binary.LittleEndian.Uint32(data)) {
-				return MessageResponseType, padding
-			}
-		}
-	}
-
-	if expectedType == MessageUnknownType || expectedType == MessageCookieReplyType {
-		padding := device.paddings.cookie
-		header := device.headers.cookie
-
-		if size == padding+MessageCookieReplySize {
-			data := packet[padding:]
-			if header.Validate(binary.LittleEndian.Uint32(data)) {
-				return MessageCookieReplyType, padding
-			}
-		}
-	}
-
-	if expectedType == MessageUnknownType || expectedType == MessageTransportType {
-		padding := device.paddings.transport
-		header := device.headers.transport
-
-		if size >= padding+MessageTransportHeaderSize {
-			data := packet[padding:]
-			if header.Validate(binary.LittleEndian.Uint32(data)) {
-				return MessageTransportType, padding
-			}
-		}
-	}
-
-	return MessageUnknownType, 0
 }
+
+// DeterminePacketTypeAndPadding classifies a datagram by the AmneziaWG
+// parameters: for each message kind, the type word is read at that kind's
+// padding offset (S1–S4), unmasked with typeHash (the AWG 3.x header
+// protection keystream, all zeros when off) and matched against the kind's
+// magic range (H1–H4). Fixed-size messages must match their size exactly, or —
+// with random_trailers — exceed it (the trailer is discarded by the caller).
+// Returns the message size (without padding/trailer), its canonical type and
+// the padding length; MessageUnknownType when nothing matched.
+func (device *Device) DeterminePacketTypeAndPadding(packet []byte, typeHash []byte) (int, uint32, uint32) {
+	var headerBytes [4]byte
+	var padding uint32
+	var header UintRange
+	var expectedSize int
+
+	size := len(packet)
+	randomTrailers := device.randomTrailers.Load()
+
+	padding = device.paddings.init.Load()
+	header = device.headers.init.Load()
+	expectedSize = int(padding) + MessageInitiationSize
+
+	if size == expectedSize || randomTrailers && size > expectedSize {
+		applyHash(headerBytes[:], packet[padding:padding+4], typeHash)
+		if header.Contains(binary.LittleEndian.Uint32(headerBytes[:])) {
+			return MessageInitiationSize, MessageInitiationType, padding
+		}
+	}
+
+	padding = device.paddings.response.Load()
+	header = device.headers.response.Load()
+	expectedSize = int(padding) + MessageResponseSize
+
+	if size == expectedSize || randomTrailers && size > expectedSize {
+		applyHash(headerBytes[:], packet[padding:padding+4], typeHash)
+		if header.Contains(binary.LittleEndian.Uint32(headerBytes[:])) {
+			return MessageResponseSize, MessageResponseType, padding
+		}
+	}
+
+	padding = device.paddings.cookie.Load()
+	header = device.headers.cookie.Load()
+	expectedSize = int(padding) + MessageCookieReplySize
+
+	if size == expectedSize || randomTrailers && size > expectedSize {
+		applyHash(headerBytes[:], packet[padding:padding+4], typeHash)
+		if header.Contains(binary.LittleEndian.Uint32(headerBytes[:])) {
+			return MessageCookieReplySize, MessageCookieReplyType, padding
+		}
+	}
+
+	padding = device.paddings.transport.Load()
+	header = device.headers.transport.Load()
+	expectedSize = int(padding) + MessageTransportSize
+
+	if size >= expectedSize {
+		applyHash(headerBytes[:], packet[padding:padding+4], typeHash)
+		if header.Contains(binary.LittleEndian.Uint32(headerBytes[:])) {
+			return MessageTransportSize, MessageTransportType, padding
+		}
+	}
+
+	return 0, MessageUnknownType, 0
+}
+
+// lx:end awg3

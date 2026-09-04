@@ -71,7 +71,7 @@ func (device *Device) sessionProvablyDead(peer *Peer) bool {
 	if peer.keypairs.Current() == nil {
 		return true
 	}
-	return time.Since(time.Unix(0, peer.lastHandshakeNano.Load())) > RejectAfterTime
+	return time.Since(time.Unix(0, peer.lastHandshakeNano.Load())) > device.keychainExpireTime()
 }
 
 // RebindIfSessionStale is the wake-nudge entry (trigger 3): the consumer

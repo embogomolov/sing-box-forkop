@@ -6,6 +6,7 @@
 package device
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/sagernet/wireguard-go/conn"
 	"github.com/sagernet/wireguard-go/tai64n"
 	"golang.org/x/crypto/blake2s"
+	"golang.org/x/crypto/chacha20"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/poly1305"
 )
@@ -288,7 +290,7 @@ func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, e
 
 	handshake.mixHash(handshake.remoteStatic[:])
 
-	msgType := device.headers.init.Generate()
+	msgType := device.headers.init.Load().PickOne()
 
 	msg := MessageInitiation{
 		Type:      msgType,
@@ -474,7 +476,7 @@ func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error
 	}
 
 	var msg MessageResponse
-	msg.Type = device.headers.response.Generate()
+	msg.Type = device.headers.response.Load().PickOne()
 	msg.Sender = handshake.localIndex
 	msg.Receiver = handshake.remoteIndex
 
@@ -733,3 +735,52 @@ func (peer *Peer) ReceivedWithKeypair(receivedKeypair *Keypair) bool {
 	keypairs.next.Store(nil)
 	return true
 }
+
+// lx:begin awg3 (AmneziaWG — ported from amneziawg-go v3 device/noise-protocol.go)
+
+// JunkPackets builds the Jc random datagrams of Jmin..Jmax bytes (inclusive)
+// that precede every handshake initiation. A swapped jmin/jmax pair is
+// tolerated by swapping back (SPEC 008): uapi validates the two individually,
+// and the unsigned subtraction would otherwise wrap into a multi-gigabyte
+// allocation.
+func (device *Device) JunkPackets() [][]byte {
+	count := device.junk.count.Load()
+	if count == 0 {
+		return nil
+	}
+	minSize := device.junk.min.Load()
+	maxSize := device.junk.max.Load()
+	if maxSize < minSize {
+		minSize, maxSize = maxSize, minSize
+	}
+
+	bufs := make([][]byte, 0, count)
+	for range count {
+		buf := make([]byte, minSize+fastrandn(maxSize-minSize+1))
+		rand.Read(buf)
+		bufs = append(bufs, buf)
+	}
+	return bufs
+}
+
+var errHeaderNonceShort = errors.New("header protection needs at least 12 bytes of padding for the nonce")
+
+// HeaderProtectionCipher returns the AWG 3.x header-protection keystream for
+// one datagram, or nil when header protection is off. The nonce is the first
+// HeaderCipherNonceSize bytes of the datagram — the S1–S4 random padding the
+// sender puts in front of every message — so datagram must be at least that
+// long (the uapi enforces S1–S4 >= 12 whenever the key is set). The same
+// keystream, from byte 0, is applied by the sender to the whole handshake
+// message / the 16-byte transport header, and by the receiver to undo it.
+func (device *Device) HeaderProtectionCipher(datagram []byte) (*chacha20.Cipher, error) {
+	key := device.headerProtection.key.Load()
+	if key == nil {
+		return nil, nil
+	}
+	if len(datagram) < HeaderCipherNonceSize {
+		return nil, errHeaderNonceShort
+	}
+	return chacha20.NewUnauthenticatedCipher(key[:], datagram[:HeaderCipherNonceSize])
+}
+
+// lx:end awg3

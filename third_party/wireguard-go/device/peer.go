@@ -57,6 +57,7 @@ type Peer struct {
 		zeroKeyMaterial         *Timer
 		persistentKeepalive     *Timer
 		handshakeAttempts       atomic.Uint32
+		maxHandshakeAttempts    atomic.Uint32 // lx: AWG 3.x max_handshake_attempts pick for this cycle
 		needAnotherKeepalive    atomic.Bool
 		sentLastMinuteHandshake atomic.Bool
 	}
@@ -80,7 +81,10 @@ type Peer struct {
 
 	cookieGenerator             CookieGenerator
 	trieEntries                 list.List
-	persistentKeepaliveInterval atomic.Uint32
+	persistentKeepaliveInterval AtomicUintRange // lx: AWG 3.x — a "min-max" range, single value = lo == hi
+	// lx: AWG 3.x — the largest datagram seen on this endpoint in either
+	// direction; the ceiling for content padding and random trailers.
+	udpWindow atomic.Uint32
 }
 
 func (device *Device) NewPeer(pk NoisePublicKey) (*Peer, error) {
@@ -102,6 +106,8 @@ func (device *Device) NewPeer(pk NoisePublicKey) (*Peer, error) {
 
 	// create peer
 	peer := new(Peer)
+
+	peer.udpWindow.Store(DefaultUdpWindow)
 
 	peer.cookieGenerator.Init(pk)
 	peer.device = device
@@ -244,7 +250,7 @@ func (peer *Peer) Start() {
 	peer.queuedOutboundPackets.Store(0)
 
 	peer.handshake.mutex.Lock()
-	peer.handshake.lastSentHandshake = time.Now().Add(-(RekeyTimeout + time.Second))
+	peer.handshake.lastSentHandshake = time.Now().Add(-(peer.device.rekeyMinTimeout() + time.Second))
 	peer.handshake.mutex.Unlock()
 
 	peer.device.queue.encryption.wg.Add(1) // keep encryption queue open for our writes
@@ -267,7 +273,7 @@ func (peer *Peer) Start() {
 	// it's reclaimed after RejectAfterTime*3 of no session and is guaranteed to
 	// be torn down by a matching Stop. A completed handshake re-Mods it.
 	if peer.deleteOnIdle {
-		peer.timers.zeroKeyMaterial.Mod(RejectAfterTime * 3)
+		peer.timers.zeroKeyMaterial.Mod(peer.device.keychainExpireTime() * 3)
 	}
 }
 
@@ -310,7 +316,7 @@ func (peer *Peer) ExpireCurrentKeypairs() {
 	handshake.mutex.Lock()
 	peer.device.indexTable.Delete(handshake.localIndex)
 	handshake.Clear()
-	peer.handshake.lastSentHandshake = time.Now().Add(-(RekeyTimeout + time.Second))
+	peer.handshake.lastSentHandshake = time.Now().Add(-(peer.device.rekeyMinTimeout() + time.Second))
 	handshake.mutex.Unlock()
 
 	keypairs := &peer.keypairs
@@ -400,8 +406,39 @@ func (peer *Peer) SetEndpointFromPacket(endpoint conn.Endpoint) {
 	if peer.endpoint.disableRoaming {
 		return
 	}
+	// lx: AWG 3.x — a roamed peer is a new path; forget the UDP window learnt
+	// on the old one. Compared by destination, not identity: binds hand out a
+	// fresh Endpoint value per received datagram.
+	if !sameDestination(peer.endpoint.val, endpoint) {
+		peer.udpWindow.Store(DefaultUdpWindow)
+	}
 	peer.endpoint.clearSrcOnTx = false
 	peer.endpoint.val = endpoint
+}
+
+// sameDestination reports whether two endpoints address the same peer
+// destination. Nil-safe; used to detect roaming.
+func sameDestination(a, b conn.Endpoint) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.DstToString() == b.DstToString()
+}
+
+// noteUDPWindow widens the peer's UDP window to size if it is larger — the
+// largest datagram seen on this endpoint in either direction, i.e. a size the
+// path is known to carry. AWG 3.x content padding and random trailers never
+// grow a datagram beyond it.
+func (peer *Peer) noteUDPWindow(size uint32) {
+	for {
+		current := peer.udpWindow.Load()
+		if size <= current {
+			return
+		}
+		if peer.udpWindow.CompareAndSwap(current, size) {
+			return
+		}
+	}
 }
 
 func (peer *Peer) resolveEndpoints() []conn.Endpoint {

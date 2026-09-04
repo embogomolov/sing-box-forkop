@@ -61,6 +61,11 @@ type chanBind struct {
 
 	mu          sync.Mutex
 	closeSignal chan struct{} // recreated on every Open (BindUpdate closes+reopens)
+
+	// tap, if set, sees a copy of every datagram this bind sends (wire-format
+	// assertions in the AWG tests). Set before Up; called on the sender's
+	// goroutine.
+	tap func(pkt []byte)
 }
 
 // newChanBindPair returns two Binds whose Send/Receive are cross-wired.
@@ -124,6 +129,9 @@ func (b *chanBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 	for _, buf := range bufs {
 		pkt := make([]byte, len(buf)-offset)
 		copy(pkt, buf[offset:])
+		if b.tap != nil {
+			b.tap(pkt)
+		}
 		select {
 		case <-closeSignal:
 			return net.ErrClosed
@@ -271,8 +279,8 @@ func newPaddedDevicePair(t *testing.T) *paddedPair {
 	if err := devB.IpcSet(cfgB); err != nil {
 		t.Fatalf("IpcSet B: %v", err)
 	}
-	if devA.paddings.transport != testTransportPadding {
-		t.Fatalf("s4 not applied: paddings.transport = %d", devA.paddings.transport)
+	if devA.paddings.transport.Load() != testTransportPadding {
+		t.Fatalf("s4 not applied: paddings.transport = %d", devA.paddings.transport.Load())
 	}
 
 	if err := devA.Up(); err != nil {
