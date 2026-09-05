@@ -104,7 +104,9 @@ func (device *Device) RoutineReceiveIncoming(
 		endpoints   = make([]conn.Endpoint, maxBatchSize)
 		deathSpiral int
 		elemsByPeer = make(map[*Peer]*QueueInboundElementsContainer, maxBatchSize)
-		typeHashBuf [4]byte
+		// lx: keystream bytes 0..8 of the header cipher — enough to unmask the
+		// type word and the receiver index (SPEC 081) before classification.
+		headerHashBuf [8]byte
 	)
 
 	for i := range bufsArrs {
@@ -154,21 +156,33 @@ func (device *Device) RoutineReceiveIncoming(
 
 			// lx: AmneziaWG 3.x header protection — the keystream for this
 			// datagram is salted with its first 12 bytes (the S1–S4 padding);
-			// its first 4 bytes unmask the message type wherever it sits.
+			// its first 8 bytes unmask the type word and the receiver index
+			// wherever they sit.
 			cip, err := device.HeaderProtectionCipher(packet)
 			if err != nil {
 				device.log.Errorf("Failed to initialize header cipher: %v", err)
 				continue
 			}
 
-			typeHash := typeHashBuf[:]
-			clear(typeHash)
+			headerHash := headerHashBuf[:]
+			clear(headerHash)
 			if cip != nil {
-				cip.XORKeyStream(typeHash, typeHash)
+				cip.XORKeyStream(headerHash, headerHash)
 			}
 
-			// get message padding and type based on information from S1-S4 and H1-H4
-			msgSize, msgType, padding := device.DeterminePacketTypeAndPadding(packet, typeHash)
+			// lx: SPEC 081 — a datagram that carries one of our live receiver
+			// indices behind a transport type word is a data packet, whatever
+			// its size; only then fall back to the reference order, which lets a
+			// handshake kind claim a data datagram by its (random) type word.
+			var msgSize int
+			var msgType, padding uint32
+			entry, transportPadding, byIndex := device.classifyTransportByIndex(packet, headerHash)
+			if byIndex {
+				msgSize, msgType, padding = MessageTransportSize, MessageTransportType, transportPadding
+			} else {
+				// get message padding and type based on information from S1-S4 and H1-H4
+				msgSize, msgType, padding = device.DeterminePacketTypeAndPadding(packet, headerHash[:4])
+			}
 			if msgType == MessageUnknownType {
 				device.log.Verbosef("Received message with unknown type")
 				continue
@@ -181,8 +195,10 @@ func (device *Device) RoutineReceiveIncoming(
 				packet = packet[:msgSize]
 			}
 
+			// unmask the first 8 bytes (type + sender/receiver index) with the
+			// keystream already drawn; the cipher continues from byte 8 below
 			if cip != nil {
-				applyHash(packet[:4], packet[:4], typeHash)
+				applyHash(packet[:8], packet[:8], headerHash)
 			}
 
 			switch msgType {
@@ -197,15 +213,18 @@ func (device *Device) RoutineReceiveIncoming(
 					continue
 				}
 				if cip != nil {
-					cip.XORKeyStream(packet[4:MessageTransportHeaderSize], packet[4:MessageTransportHeaderSize])
+					cip.XORKeyStream(packet[8:MessageTransportHeaderSize], packet[8:MessageTransportHeaderSize])
 				}
 
 				// lookup key pair
 
-				receiver := binary.LittleEndian.Uint32(
-					packet[MessageTransportOffsetReceiver:MessageTransportOffsetCounter],
-				)
-				value := device.indexTable.Lookup(receiver)
+				value := entry
+				if !byIndex {
+					receiver := binary.LittleEndian.Uint32(
+						packet[MessageTransportOffsetReceiver:MessageTransportOffsetCounter],
+					)
+					value = device.indexTable.Lookup(receiver)
+				}
 				keypair := value.keypair
 				if keypair == nil {
 					continue
@@ -244,7 +263,7 @@ func (device *Device) RoutineReceiveIncoming(
 					continue
 				}
 				if cip != nil {
-					cip.XORKeyStream(packet[4:MessageInitiationSize], packet[4:MessageInitiationSize])
+					cip.XORKeyStream(packet[8:MessageInitiationSize], packet[8:MessageInitiationSize])
 				}
 
 			case MessageResponseType:
@@ -252,7 +271,7 @@ func (device *Device) RoutineReceiveIncoming(
 					continue
 				}
 				if cip != nil {
-					cip.XORKeyStream(packet[4:MessageResponseSize], packet[4:MessageResponseSize])
+					cip.XORKeyStream(packet[8:MessageResponseSize], packet[8:MessageResponseSize])
 				}
 
 			case MessageCookieReplyType:
@@ -260,7 +279,7 @@ func (device *Device) RoutineReceiveIncoming(
 					continue
 				}
 				if cip != nil {
-					cip.XORKeyStream(packet[4:MessageCookieReplySize], packet[4:MessageCookieReplySize])
+					cip.XORKeyStream(packet[8:MessageCookieReplySize], packet[8:MessageCookieReplySize])
 				}
 
 			default:
@@ -655,14 +674,46 @@ func applyHash(dst, src, hash []byte) {
 	}
 }
 
+// classifyTransportByIndex is the lx transport-first candidate (SPEC 081). A
+// data packet always carries one of our live receiver indices — a 32-bit value
+// a foreign datagram cannot hold by accident — so a datagram whose unmasked
+// type word is in H4 and whose unmasked receiver index resolves to a live
+// keypair is a transport message, whatever its size. The reference order
+// (DeterminePacketTypeAndPadding) tries the handshake kinds first, by size and
+// type word alone, and with a wide H range claims real data packets: every one
+// of exactly S1+148 / S2+92 / S3+64 bytes (AWG2), and under random_trailers
+// every one longer than that (AWG 3.1). headerHash is the header-cipher
+// keystream for bytes 0..8 (zeros when header protection is off). Returns the
+// index-table entry, the transport padding and whether it matched; on a miss
+// the caller falls back to the reference order, so nothing it accepted before
+// is refused now.
+func (device *Device) classifyTransportByIndex(packet []byte, headerHash []byte) (IndexTableEntry, uint32, bool) {
+	padding := device.paddings.transport.Load()
+	if len(packet) < int(padding)+MessageTransportSize {
+		return IndexTableEntry{}, 0, false
+	}
+	var header [8]byte
+	applyHash(header[:], packet[padding:padding+8], headerHash[:8])
+	if !device.headers.transport.Load().Contains(binary.LittleEndian.Uint32(header[:4])) {
+		return IndexTableEntry{}, 0, false
+	}
+	entry := device.indexTable.Lookup(binary.LittleEndian.Uint32(header[4:8]))
+	if entry.keypair == nil {
+		return IndexTableEntry{}, 0, false
+	}
+	return entry, padding, true
+}
+
 // DeterminePacketTypeAndPadding classifies a datagram by the AmneziaWG
-// parameters: for each message kind, the type word is read at that kind's
-// padding offset (S1–S4), unmasked with typeHash (the AWG 3.x header
-// protection keystream, all zeros when off) and matched against the kind's
-// magic range (H1–H4). Fixed-size messages must match their size exactly, or —
-// with random_trailers — exceed it (the trailer is discarded by the caller).
-// Returns the message size (without padding/trailer), its canonical type and
-// the padding length; MessageUnknownType when nothing matched.
+// parameters in the reference (amneziawg-go) order: for each message kind, the
+// type word is read at that kind's padding offset (S1–S4), unmasked with
+// typeHash (the AWG 3.x header protection keystream, all zeros when off) and
+// matched against the kind's magic range (H1–H4). Fixed-size messages must
+// match their size exactly, or — with random_trailers — exceed it (the trailer
+// is discarded by the caller). Returns the message size (without
+// padding/trailer), its canonical type and the padding length;
+// MessageUnknownType when nothing matched. Runs after classifyTransportByIndex
+// missed (SPEC 081).
 func (device *Device) DeterminePacketTypeAndPadding(packet []byte, typeHash []byte) (int, uint32, uint32) {
 	var headerBytes [4]byte
 	var padding uint32
