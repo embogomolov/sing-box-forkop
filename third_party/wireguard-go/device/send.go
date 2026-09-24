@@ -278,6 +278,7 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 	} else {
 		err = peer.SendBuffers(sendBuffer)
 	}
+	err = unwrapGSODisabled(peer.device.log, err) // lx: SPEC 101
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to send handshake initiation: %v", peer, err)
 	}
@@ -338,6 +339,7 @@ func (peer *Peer) SendHandshakeResponse() error {
 
 	// TODO: allocation could be avoided
 	err = peer.SendBuffers([][]byte{buf})
+	err = unwrapGSODisabled(peer.device.log, err) // lx: SPEC 101
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to send handshake response: %v", peer, err)
 	}
@@ -1072,13 +1074,7 @@ func (peer *Peer) processOutboundContainer(elemsContainer *QueueOutboundElements
 		device.PutOutboundBuffer(elem.buffer)
 		device.PutOutboundElement(elem)
 	}
-	if err != nil {
-		var errGSO conn.ErrUDPGSODisabled
-		if errors.As(err, &errGSO) {
-			device.log.Verbosef(err.Error())
-			err = errGSO.RetryErr
-		}
-	}
+	err = unwrapGSODisabled(device.log, err) // lx: SPEC 101
 	if err != nil {
 		device.log.Errorf("%v - Failed to send data packets: %v", peer, err)
 		return
