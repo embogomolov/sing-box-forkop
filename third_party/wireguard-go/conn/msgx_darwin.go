@@ -313,7 +313,7 @@ func (s *StdNetBind) makeReceiveMsgX(conn *net.UDPConn, isV6 bool) (ReceiveFunc,
 		numMsgs := int(n)
 		for i := 0; i < numMsgs; i++ {
 			sizes[i] = int(state.hdrs[i].DataLen)
-			if sizes[i] > 3 {
+			if sizes[i] > 3 && s.hasReserved() { // lx: only strip reserved bytes for WARP (see hasReserved)
 				bufs[i][1] = 0
 				bufs[i][2] = 0
 				bufs[i][3] = 0
