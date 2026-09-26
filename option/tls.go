@@ -253,5 +253,5 @@ type OutboundRealityOptions struct {
 	Enabled               bool   `json:"enabled,omitempty"`
 	PublicKey             string `json:"public_key,omitempty"`
 	ShortID               string `json:"short_id,omitempty"`
-	SupportX25519MLKEM768 bool   `json:"support_x25519mlkem768,omitempty"`
+	SupportX25519MLKEM768 *bool  `json:"support_x25519mlkem768,omitempty"`
 }

@@ -85,7 +85,11 @@ func newRealityClient(ctx context.Context, logger logger.ContextLogger, serverAd
 		return nil, E.Cause(err, "decode short_id")
 	}
 
-	var config Config = &RealityClientConfig{ctx, uClient.(*UTLSClientConfig), publicKey, shortID, options.Reality.SupportX25519MLKEM768}
+	supportX25519MLKEM768 := true
+	if options.Reality.SupportX25519MLKEM768 != nil {
+		supportX25519MLKEM768 = *options.Reality.SupportX25519MLKEM768
+	}
+	var config Config = &RealityClientConfig{ctx, uClient.(*UTLSClientConfig), publicKey, shortID, supportX25519MLKEM768}
 	if options.KernelRx || options.KernelTx {
 		if !C.IsLinux {
 			return nil, E.New("kTLS is only supported on Linux")
