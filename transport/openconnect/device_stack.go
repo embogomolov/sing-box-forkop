@@ -20,6 +20,7 @@ import (
 	"github.com/sagernet/gvisor/pkg/tcpip/transport/icmp"
 	"github.com/sagernet/gvisor/pkg/tcpip/transport/tcp"
 	"github.com/sagernet/gvisor/pkg/tcpip/transport/udp"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -202,6 +203,8 @@ func (d *stackDevice) DialContext(ctx context.Context, network string, destinati
 	}
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
+		ctx, cancel := context.WithTimeout(ctx, C.TCPTimeout)
+		defer cancel()
 		return gonet.DialTCPWithBind(ctx, d.stack, bind, address, networkProtocol)
 	case N.NetworkUDP:
 		return gonet.DialUDP(d.stack, &bind, &address, networkProtocol)

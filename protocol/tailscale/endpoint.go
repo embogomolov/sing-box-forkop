@@ -801,6 +801,8 @@ func (t *Endpoint) DialContext(ctx context.Context, network string, destination 
 	}
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
+		ctx, cancel := context.WithTimeout(ctx, C.TCPTimeout)
+		defer cancel()
 		tcpConn, err := gonet.DialTCPWithBind(ctx, t.stack, localAddr, remoteAddr, networkProtocol)
 		if err != nil {
 			return nil, err
