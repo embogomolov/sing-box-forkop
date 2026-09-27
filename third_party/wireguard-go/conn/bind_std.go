@@ -83,7 +83,7 @@ func NewStdNetBind(externalControl control.Func) Bind {
 			New: func() any {
 				// ipv6.Message and ipv4.Message are interchangeable as they are
 				// both aliases for x/net/internal/socket.Message.
-				msgs := make([]ipv6.Message, IdealBatchSize)
+				msgs := make([]ipv6.Message, stdNetBindBatchSize)
 				for i := range msgs {
 					msgs[i].Buffers = make(net.Buffers, 1)
 					msgs[i].OOB = make([]byte, 0, stickyControlSize+gsoControlSize)
@@ -372,7 +372,7 @@ func (s *StdNetBind) receiveIP(
 	var numMsgs int
 	if runtime.GOOS == "linux" || runtime.GOOS == "android" {
 		if rxOffload {
-			readAt := len(*msgs) - (IdealBatchSize / udpSegmentMaxDatagrams)
+			readAt := len(*msgs) - (stdNetBindBatchSize / udpSegmentMaxDatagrams)
 			numMsgs, err = br.ReadBatch((*msgs)[readAt:], 0)
 			if err != nil {
 				return 0, err
@@ -423,11 +423,15 @@ func (s *StdNetBind) makeReceiveIPv6(pc *ipv6.PacketConn, conn *net.UDPConn, rxO
 	}
 }
 
+// stdNetBindBatchSize is smaller than IdealBatchSize, which other binds size their batches by:
+// every slot of a receive batch holds a 64 KiB buffer for good, and one UDP GRO read fills 64.
+const stdNetBindBatchSize = udpSegmentMaxDatagrams
+
 // TODO: When all Binds handle IdealBatchSize, remove this dynamic function and
 // rename the IdealBatchSize constant to BatchSize.
 func (s *StdNetBind) BatchSize() int {
 	if runtime.GOOS == "linux" || runtime.GOOS == "android" {
-		return IdealBatchSize
+		return stdNetBindBatchSize
 	}
 	if supportsMsgX {
 		return msgXBatchSize
@@ -479,12 +483,12 @@ func (e ErrUDPGSODisabled) Unwrap() error {
 }
 
 func (s *StdNetBind) Send(bufs [][]byte, endpoint Endpoint, offset int) error {
-	for len(bufs) > IdealBatchSize {
-		err := s.Send(bufs[:IdealBatchSize], endpoint, offset)
+	for len(bufs) > stdNetBindBatchSize {
+		err := s.Send(bufs[:stdNetBindBatchSize], endpoint, offset)
 		if err != nil {
 			return err
 		}
-		bufs = bufs[IdealBatchSize:]
+		bufs = bufs[stdNetBindBatchSize:]
 	}
 	if s.onWrite != nil && len(bufs) > 0 {
 		s.onWrite(len(bufs[0]) - offset)

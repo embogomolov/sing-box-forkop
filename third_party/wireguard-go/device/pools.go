@@ -61,7 +61,7 @@ func (device *Device) PopulatePools() {
 		s := make([]*QueueOutboundElement, 0, device.BatchSize())
 		return &QueueOutboundElementsContainer{elems: s}
 	}}
-	device.pool.messageBuffers = NewWaitPool(PreallocatedBuffersPerPool, func() any {
+	device.pool.messageBuffers = NewWaitPool(messageBufferBound(device.BatchSize()), func() any {
 		return new([MaxMessageSize]byte)
 	})
 	device.pool.inboundElements = &sync.Pool{New: func() any {
@@ -70,6 +70,15 @@ func (device *Device) PopulatePools() {
 	device.pool.outboundElements = &sync.Pool{New: func() any {
 		return new(QueueOutboundElement)
 	}}
+}
+
+// messageBufferBound keeps four batches of a bind that batches more than StdNetBind, such as
+// magicsock, whose three receive loops hold a batch of conn.IdealBatchSize each.
+func messageBufferBound(batchSize int) uint32 {
+	if PreallocatedBuffersPerPool == 0 {
+		return 0
+	}
+	return max(PreallocatedBuffersPerPool, 4*uint32(batchSize))
 }
 
 func (device *Device) GetInboundElementsContainer() *QueueInboundElementsContainer {

@@ -38,13 +38,20 @@ func (b *capBind) maxCap() int {
 	return result
 }
 
-// The receive buffers are bounded by default, and the bound leaves room past
-// what the receive loops hold for good (a batch per socket, IPv4 and IPv6):
-// below that the second loop never starts and the device stops receiving.
+// The pool leaves room past what the receive loops hold for good, a batch each:
+// below that the last loop never starts and the device stops receiving.
 func TestDefaultMessagePoolIsBoundedAboveTheReceiveLoops(t *testing.T) {
-	held := 2 * conn.IdealBatchSize
-	if int(PreallocatedBuffersPerPool) <= held {
-		t.Fatalf("default message buffer pool of %d does not exceed the %d buffers the receive loops hold", PreallocatedBuffersPerPool, held)
+	for _, bind := range []struct {
+		name         string
+		batch, loops int
+	}{
+		{"StdNetBind, IPv4 and IPv6", conn.NewStdNetBind(nil).BatchSize(), 2},
+		{"magicsock, IPv4, IPv6 and DERP", conn.IdealBatchSize, 3},
+	} {
+		bound, held := messageBufferBound(bind.batch), bind.loops*bind.batch
+		if bound == 0 || int(bound) <= held {
+			t.Fatalf("%s: a message buffer pool of %d does not exceed the %d buffers the receive loops hold", bind.name, bound, held)
+		}
 	}
 }
 
