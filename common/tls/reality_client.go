@@ -76,12 +76,12 @@ func newRealityClient(ctx context.Context, logger logger.ContextLogger, serverAd
 		return nil, E.New("invalid public_key")
 	}
 	var shortID [8]byte
-	decodedLen, err := hex.Decode(shortID[:], []byte(options.Reality.ShortID))
+	if hex.DecodedLen(len(options.Reality.ShortID)) > len(shortID) {
+		return nil, E.New("invalid short_id")
+	}
+	_, err = hex.Decode(shortID[:], []byte(options.Reality.ShortID))
 	if err != nil {
 		return nil, E.Cause(err, "decode short_id")
-	}
-	if decodedLen > 8 {
-		return nil, E.New("invalid short_id")
 	}
 
 	var config Config = &RealityClientConfig{ctx, uClient.(*UTLSClientConfig), publicKey, shortID}

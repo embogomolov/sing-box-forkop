@@ -109,12 +109,12 @@ func NewRealityServer(ctx context.Context, logger log.ContextLogger, options opt
 	} else {
 		for i, shortIDString := range options.Reality.ShortID {
 			var shortID [8]byte
-			decodedLen, err := hex.Decode(shortID[:], []byte(shortIDString))
+			if hex.DecodedLen(len(shortIDString)) > len(shortID) {
+				return nil, E.New("invalid short_id[", i, "]: ", shortIDString)
+			}
+			_, err = hex.Decode(shortID[:], []byte(shortIDString))
 			if err != nil {
 				return nil, E.Cause(err, "decode short_id[", i, "]: ", shortIDString)
-			}
-			if decodedLen > 8 {
-				return nil, E.New("invalid short_id[", i, "]: ", shortIDString)
 			}
 			tlsConfig.ShortIds[shortID] = true
 		}
