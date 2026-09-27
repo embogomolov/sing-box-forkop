@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/common/badh2"
 	"github.com/sagernet/sing-box/common/xray/signal/done"
 )
 
@@ -24,7 +25,8 @@ func (c *splitConn) Write(b []byte) (int, error) {
 }
 
 func (c *splitConn) Read(b []byte) (int, error) {
-	return c.reader.Read(b)
+	n, err := c.reader.Read(b)
+	return n, badh2.HideStreamError(err)
 }
 
 func (c *splitConn) Close() error {
