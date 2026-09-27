@@ -88,6 +88,25 @@ func (device *Device) NewOutboundElement() *QueueOutboundElement {
 	return elem
 }
 
+// newTunElement copies a packet read from a TUN that reads one packet at a
+// time into an element sized for the datagram it becomes. Such a packet is
+// always sent on its own, so the MaxMessageSize room that lets a send coalesce
+// packets goes unused while thousands of them queue behind a slow uplink. The
+// trailing addition RoutineEncryption appends never grows a datagram past the
+// peer's UDP window, so the element holds that window.
+func (device *Device) newTunElement(peer *Peer, packet []byte) *QueueOutboundElement {
+	padding := device.paddings.transport.Load()
+	offset := MessageEncapsulatingTransportSize + int(padding) + MessageTransportHeaderSize
+	datagram := max(int(peer.udpWindow.Load()), int(padding)+MessageTransportSize+len(packet)+PaddingMultiple)
+	elem := device.GetOutboundElement()
+	elem.buffer = device.GetOutboundBuffer(min(MessageEncapsulatingTransportSize+datagram, MaxMessageSize))
+	elem.nonce = 0
+	elem.padding = padding
+	elem.isKeepalive = false
+	elem.packet = elem.buffer[offset : offset+copy(elem.buffer[offset:], packet)]
+	return elem
+}
+
 // plaintextOffset is where this element's plaintext starts in buffer: behind
 // the (sagernet) encapsulation headroom, the AWG transport padding and the
 // transport header, all of which RoutineEncryption fills in place.
@@ -428,7 +447,7 @@ func (device *Device) RoutineReadFromTUN() {
 	device.log.Verbosef("Routine: TUN reader - started")
 
 	var (
-		batchSize   = device.BatchSize()
+		batchSize   = device.tun.device.BatchSize()
 		readErr     error
 		elems       = make([]*QueueOutboundElement, batchSize)
 		bufs        = make([][]byte, batchSize)
@@ -495,14 +514,18 @@ func (device *Device) RoutineReadFromTUN() {
 			if peer == nil {
 				continue
 			}
+			if batchSize == 1 {
+				elem = device.newTunElement(peer, elem.packet)
+			} else {
+				elems[i] = device.NewOutboundElement()
+				bufs[i] = elems[i].buffer[:]
+			}
 			elemsForPeer, ok := elemsByPeer[peer]
 			if !ok {
 				elemsForPeer = device.GetOutboundElementsContainer()
 				elemsByPeer[peer] = elemsForPeer
 			}
 			elemsForPeer.elems = append(elemsForPeer.elems, elem)
-			elems[i] = device.NewOutboundElement()
-			bufs[i] = elems[i].buffer[:]
 		}
 
 		for peer, elemsForPeer := range elemsByPeer {
