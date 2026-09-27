@@ -38,6 +38,16 @@ func (b *capBind) maxCap() int {
 	return result
 }
 
+// The receive buffers are bounded by default, and the bound leaves room past
+// what the receive loops hold for good (a batch per socket, IPv4 and IPv6):
+// below that the second loop never starts and the device stops receiving.
+func TestDefaultMessagePoolIsBoundedAboveTheReceiveLoops(t *testing.T) {
+	held := 2 * conn.IdealBatchSize
+	if int(PreallocatedBuffersPerPool) <= held {
+		t.Fatalf("default message buffer pool of %d does not exceed the %d buffers the receive loops hold", PreallocatedBuffersPerPool, held)
+	}
+}
+
 // After the peer's UDP window has grown past DefaultUdpWindow, the random
 // trailer of a small packet read from the TUN still reaches up to that window:
 // sizing the element for the packet must not shorten the obfuscation.
