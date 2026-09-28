@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	runtimeDebug "runtime/debug"
@@ -196,7 +197,7 @@ func run() error {
 		for {
 			osSignal := <-osSignals
 			if osSignal == syscall.SIGHUP {
-				err = check()
+				err = checkForReload()
 				if err != nil {
 					log.Error(E.Cause(err, "reload service"))
 					continue
@@ -222,6 +223,35 @@ func run() error {
 			return err
 		}
 	}
+}
+
+// A check builds the configuration and closes it unstarted, which leaves running what a component
+// starts while built, such as a WireGuard endpoint's netstack; a reload checks in its own process.
+func checkForReload() error {
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	args := []string{"check", "--disable-color"}
+	for _, path := range configPaths {
+		args = append(args, "--config", path)
+	}
+	for _, directory := range configDirectories {
+		args = append(args, "--config-directory", directory)
+	}
+	output, err := exec.Command(executable, args...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	message := lines[len(lines)-1]
+	if strings.HasPrefix(message, "FATAL[") {
+		_, message, _ = strings.Cut(message, "] ")
+	}
+	if message == "" {
+		return err
+	}
+	return E.New(message)
 }
 
 func closeMonitor(ctx context.Context) {
