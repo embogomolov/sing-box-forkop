@@ -38,10 +38,11 @@ type endpointBase struct {
 	logger log.ContextLogger
 }
 
-func (e *endpointBase) newConnection(ctx context.Context, endpoint adapter.Endpoint, localAddresses []netip.Prefix, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+func (e *endpointBase) newConnection(ctx context.Context, endpoint adapter.Endpoint, localAddresses []netip.Prefix, user string, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	var metadata adapter.InboundContext
 	metadata.Inbound = endpoint.Tag()
 	metadata.InboundType = endpoint.Type()
+	metadata.User = user
 	metadata.Source = source
 	if isEndpointLocalAddress(localAddresses, destination.Addr) {
 		metadata.OriginDestination = destination
@@ -53,10 +54,11 @@ func (e *endpointBase) newConnection(ctx context.Context, endpoint adapter.Endpo
 	e.router.RouteConnectionEx(ctx, conn, metadata, onClose)
 }
 
-func (e *endpointBase) newPacketConnection(ctx context.Context, endpoint adapter.Endpoint, localAddresses []netip.Prefix, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+func (e *endpointBase) newPacketConnection(ctx context.Context, endpoint adapter.Endpoint, localAddresses []netip.Prefix, user string, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	var metadata adapter.InboundContext
 	metadata.Inbound = endpoint.Tag()
 	metadata.InboundType = endpoint.Type()
+	metadata.User = user
 	metadata.Source = source
 	if isEndpointLocalAddress(localAddresses, destination.Addr) {
 		metadata.OriginDestination = destination
@@ -69,10 +71,11 @@ func (e *endpointBase) newPacketConnection(ctx context.Context, endpoint adapter
 	e.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
 
-func (e *endpointBase) newDNSPacket(ctx context.Context, endpoint adapter.Endpoint, payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
+func (e *endpointBase) newDNSPacket(ctx context.Context, endpoint adapter.Endpoint, user string, payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
 	var metadata adapter.InboundContext
 	metadata.Inbound = endpoint.Tag()
 	metadata.InboundType = endpoint.Type()
+	metadata.User = user
 	metadata.Network = N.NetworkUDP
 	metadata.Source = source
 	metadata.Destination = destination
@@ -97,13 +100,13 @@ func loopbackAddressFor(address netip.Addr) netip.Addr {
 	return netip.IPv6Loopback()
 }
 
-func judgeOpenVPNFlow(router adapter.Router, tag string, endpointType string, localAddresses []netip.Prefix, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+func judgeOpenVPNFlow(router adapter.Router, metadata adapter.InboundContext, localAddresses []netip.Prefix, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	for _, localPrefix := range localAddresses {
 		if destination.Addr() == localPrefix.Addr() {
 			return tun.FlowVerdict{Action: tun.ActionAccept}
 		}
 	}
-	return adapter.JudgeFlow(router, adapter.InboundContext{Inbound: tag, InboundType: endpointType}, network, source, destination, firstPacket)
+	return adapter.JudgeFlow(router, metadata, network, source, destination, firstPacket)
 }
 
 func keyDirectionValue(direction string) (int, error) {

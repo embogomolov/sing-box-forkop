@@ -687,11 +687,11 @@ func (c *ClientEndpoint) DetachReturn(returnPath tun.Return) error {
 }
 
 func (c *ClientEndpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
-	return judgeOpenVPNFlow(c.router, c.Tag(), c.Type(), c.state.Load().localAddresses, network, source, destination, firstPacket)
+	return judgeOpenVPNFlow(c.router, adapter.InboundContext{Inbound: c.Tag(), InboundType: c.Type()}, c.state.Load().localAddresses, network, source, destination, firstPacket)
 }
 
 func (c *ClientEndpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
-	c.newDNSPacket(log.ContextWithNewID(c.ctx), c, payload, source, destination, writer)
+	c.newDNSPacket(log.ContextWithNewID(c.ctx), c, "", payload, source, destination, writer)
 }
 
 func (c *ClientEndpoint) ready() bool {
@@ -755,11 +755,11 @@ func (c *ClientEndpoint) writePacketBuffers(packetBuffers []*buf.Buffer) error {
 }
 
 func (c *ClientEndpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	c.newConnection(ctx, c, c.state.Load().localAddresses, conn, source, destination, onClose)
+	c.newConnection(ctx, c, c.state.Load().localAddresses, "", conn, source, destination, onClose)
 }
 
 func (c *ClientEndpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	c.newPacketConnection(ctx, c, c.state.Load().localAddresses, conn, source, destination, onClose)
+	c.newPacketConnection(ctx, c, c.state.Load().localAddresses, "", conn, source, destination, onClose)
 }
 
 func (c *ClientEndpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {

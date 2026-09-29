@@ -633,6 +633,19 @@ func (s *ServerEndpoint) readLoop(ctx context.Context) {
 	}
 }
 
+// The username a client logged in with names it, since that is what `users`
+// lists; a client known only by its certificate is its common name.
+func (s *ServerEndpoint) peerUser(address netip.Addr) string {
+	identity, found := s.server.LookupPeerIdentity(address.Unmap())
+	if !found {
+		return ""
+	}
+	if identity.Username != "" {
+		return identity.Username
+	}
+	return identity.CommonName
+}
+
 func (s *ServerEndpoint) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
 	return adapter.PreMatchFlow
 }
@@ -654,11 +667,11 @@ func (s *ServerEndpoint) DetachReturn(returnPath tun.Return) error {
 }
 
 func (s *ServerEndpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
-	return judgeOpenVPNFlow(s.router, s.Tag(), s.Type(), s.localAddresses, network, source, destination, firstPacket)
+	return judgeOpenVPNFlow(s.router, adapter.InboundContext{Inbound: s.Tag(), InboundType: s.Type(), User: s.peerUser(source.Addr())}, s.localAddresses, network, source, destination, firstPacket)
 }
 
 func (s *ServerEndpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
-	s.newDNSPacket(log.ContextWithNewID(s.ctx), s, payload, source, destination, writer)
+	s.newDNSPacket(log.ContextWithNewID(s.ctx), s, s.peerUser(source.Addr), payload, source, destination, writer)
 }
 
 func (s *ServerEndpoint) WritePackets(packets [][]byte) error {
@@ -704,11 +717,11 @@ func (s *ServerEndpoint) writeRouteMisses(routeMisses []*ovpn.RouteMissError) {
 }
 
 func (s *ServerEndpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	s.newConnection(ctx, s, s.localAddresses, conn, source, destination, onClose)
+	s.newConnection(ctx, s, s.localAddresses, s.peerUser(source.Addr), conn, source, destination, onClose)
 }
 
 func (s *ServerEndpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	s.newPacketConnection(ctx, s, s.localAddresses, conn, source, destination, onClose)
+	s.newPacketConnection(ctx, s, s.localAddresses, s.peerUser(source.Addr), conn, source, destination, onClose)
 }
 
 func (s *ServerEndpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
