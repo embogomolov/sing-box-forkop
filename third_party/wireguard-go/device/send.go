@@ -232,8 +232,8 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 	// initiation.
 	for _, ipacket := range peer.device.ipackets {
 		if ipacket != nil {
-			buf := make([]byte, ipacket.ObfuscatedLen(0))
-			ipacket.Obfuscate(buf, nil)
+			buf := make([]byte, MessageEncapsulatingTransportSize+ipacket.ObfuscatedLen(0))
+			ipacket.Obfuscate(buf[MessageEncapsulatingTransportSize:], nil)
 			sendBuffer = append(sendBuffer, buf)
 		}
 	}
@@ -245,7 +245,8 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 	padding := int(peer.device.paddings.init.Load())
 	trailerLen := max(peer.randomTrailer(padding+MessageInitiationSize), 0)
 
-	buf := make([]byte, padding+MessageInitiationSize+trailerLen)
+	sendBuf := make([]byte, MessageEncapsulatingTransportSize+padding+MessageInitiationSize+trailerLen)
+	buf := sendBuf[MessageEncapsulatingTransportSize:]
 
 	crypt := buf[:padding]
 	rand.Read(crypt)
@@ -271,7 +272,7 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 
 	rand.Read(buf[padding+MessageInitiationSize:])
 
-	sendBuffer = append(sendBuffer, buf)
+	sendBuffer = append(sendBuffer, sendBuf)
 
 	if len(candidates) > 0 {
 		err = peer.sendHandshakeBuffers(sendBuffer, candidates)
@@ -304,7 +305,8 @@ func (peer *Peer) SendHandshakeResponse() error {
 	padding := int(peer.device.paddings.response.Load())
 	trailerLen := max(peer.randomTrailer(padding+MessageResponseSize), 0)
 
-	buf := make([]byte, padding+MessageResponseSize+trailerLen)
+	sendBuf := make([]byte, MessageEncapsulatingTransportSize+padding+MessageResponseSize+trailerLen)
+	buf := sendBuf[MessageEncapsulatingTransportSize:]
 
 	crypt := buf[:padding]
 	rand.Read(crypt)
@@ -338,7 +340,7 @@ func (peer *Peer) SendHandshakeResponse() error {
 	rand.Read(buf[padding+MessageResponseSize:])
 
 	// TODO: allocation could be avoided
-	err = peer.SendBuffers([][]byte{buf})
+	err = peer.SendBuffers([][]byte{sendBuf})
 	err = unwrapGSODisabled(peer.device.log, err) // lx: SPEC 101
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to send handshake response: %v", peer, err)
@@ -367,7 +369,8 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 	padding := int(device.paddings.cookie.Load())
 	trailerLen := max(device.randomTrailer(padding+MessageCookieReplySize), 0)
 
-	buf := make([]byte, padding+MessageCookieReplySize+trailerLen)
+	sendBuf := make([]byte, MessageEncapsulatingTransportSize+padding+MessageCookieReplySize+trailerLen)
+	buf := sendBuf[MessageEncapsulatingTransportSize:]
 
 	crypt := buf[:padding]
 	rand.Read(crypt)
@@ -390,7 +393,7 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 	rand.Read(buf[padding+MessageCookieReplySize:])
 
 	// TODO: allocation could be avoided
-	device.net.bind.Send([][]byte{buf}, initiatingElem.endpoint, 0)
+	device.net.bind.Send([][]byte{sendBuf}, initiatingElem.endpoint, MessageEncapsulatingTransportSize)
 	return nil
 }
 

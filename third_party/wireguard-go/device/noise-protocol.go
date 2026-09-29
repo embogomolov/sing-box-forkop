@@ -68,7 +68,7 @@ const (
 	MessageResponseSize               = 92                                            // size of response message
 	MessageCookieReplySize            = 64                                            // size of cookie reply message
 	MessageTransportHeaderSize        = 16                                            // size of data preceding content in transport message
-	MessageEncapsulatingTransportSize = 0                                             // lx: zeroed so AmneziaWG obfuscation composes without sagernet headroom (AWG path doesn't use the Bind.Send prepend)
+	MessageEncapsulatingTransportSize = 8                                             // size of optional, free (for use by conn.Bind.Send()) space preceding the transport header
 	MessageTransportSize              = MessageTransportHeaderSize + poly1305.TagSize // size of empty transport
 	MessageKeepaliveSize              = MessageTransportSize                          // size of keepalive
 	MessageHandshakeSize              = MessageInitiationSize                         // size of largest handshake related message
@@ -756,8 +756,8 @@ func (device *Device) JunkPackets() [][]byte {
 
 	bufs := make([][]byte, 0, count)
 	for range count {
-		buf := make([]byte, minSize+fastrandn(maxSize-minSize+1))
-		rand.Read(buf)
+		buf := make([]byte, MessageEncapsulatingTransportSize+minSize+fastrandn(maxSize-minSize+1))
+		rand.Read(buf[MessageEncapsulatingTransportSize:])
 		bufs = append(bufs, buf)
 	}
 	return bufs
