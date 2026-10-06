@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -55,7 +56,90 @@ func newLoggedRouter(t *testing.T) (*Router, *lockedBuffer) {
 	factory := log.NewDefaultFactory(context.Background(), log.Formatter{BaseTime: time.Now(), DisableColors: true}, output, "", nil, false)
 	require.NoError(t, factory.Start())
 	t.Cleanup(func() { factory.Close() })
-	return &Router{ctx: context.Background(), logger: factory.NewLogger("router")}, output
+	router := &Router{ctx: context.Background(), logger: factory.NewLogger("router"), started: make(chan struct{})}
+	close(router.started)
+	return router, output
+}
+
+type fakeFakeIPStore struct {
+	adapter.FakeIPStore
+	prefix netip.Prefix
+}
+
+func (s fakeFakeIPStore) Contains(address netip.Addr) bool { return s.prefix.Contains(address) }
+
+func (s fakeFakeIPStore) Lookup(netip.Addr) (string, bool) { return "", false }
+
+type fakeFakeIPTransport struct {
+	adapter.FakeIPTransport
+	store adapter.FakeIPStore
+}
+
+func (t fakeFakeIPTransport) Store() adapter.FakeIPStore { return t.store }
+
+type fakeDNSTransportManager struct {
+	adapter.DNSTransportManager
+	fakeIP adapter.FakeIPTransport
+}
+
+func (m fakeDNSTransportManager) FakeIP() adapter.FakeIPTransport { return m.fakeIP }
+
+// closedPacketConn is the connection of a refused session: the router only closes it.
+type closedPacketConn struct {
+	N.PacketConn
+}
+
+func (closedPacketConn) Close() error { return nil }
+
+func routeRefused(t *testing.T, router *Router, network string, metadata adapter.InboundContext) {
+	closed := make(chan error, 1)
+	onClose := func(err error) { closed <- err }
+	if network == N.NetworkTCP {
+		conn, peer := net.Pipe()
+		defer peer.Close()
+		router.RouteConnectionEx(context.Background(), conn, metadata, onClose)
+	} else {
+		router.RoutePacketConnectionEx(context.Background(), closedPacketConn{}, metadata, onClose)
+	}
+	select {
+	case err := <-closed:
+		require.Error(t, err, "the connection is refused")
+	default:
+		t.Fatal("the connection was not refused")
+	}
+}
+
+// A connection to a FakeIP address the store has no record for is refused by design: the
+// log says so at the warn level, with the address, not as an error of the router.
+func TestMissingFakeIPRecordIsLoggedAsWarning(t *testing.T) {
+	router, output := newLoggedRouter(t)
+	router.dnsTransport = fakeDNSTransportManager{fakeIP: fakeFakeIPTransport{store: fakeFakeIPStore{prefix: netip.MustParsePrefix("198.18.0.0/15")}}}
+	metadata := adapter.InboundContext{
+		Inbound:     "tproxy-in",
+		Source:      M.ParseSocksaddr("192.168.1.2:40000"),
+		Destination: M.ParseSocksaddr("198.18.0.5:22"),
+	}
+	routeRefused(t, router, N.NetworkTCP, metadata)
+	routeRefused(t, router, N.NetworkUDP, metadata)
+	// the call of old inbounds returns when the connection or the router is closed; the
+	// router is closed once the refusal is logged, as its start gate would race a closed one
+	routerContext, stopRouter := context.WithCancel(context.Background())
+	router.ctx = routerContext
+	returned := make(chan error, 1)
+	go func() {
+		returned <- router.RoutePacketConnection(context.Background(), closedPacketConn{}, metadata)
+	}()
+	require.Eventually(t, func() bool { return len(output.lines()) == 3 }, 3*time.Second, time.Millisecond, output.String())
+	stopRouter()
+	require.NoError(t, <-returned)
+
+	lines := output.lines()
+	require.Len(t, lines, 3, output.String())
+	for _, line := range lines {
+		require.True(t, strings.HasPrefix(line, "WARN"), line)
+		require.Contains(t, line, "no fakeip record")
+		require.Contains(t, line, "198.18.0.5:22")
+	}
 }
 
 // onePacket delivers the same packet on every read.
