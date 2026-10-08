@@ -228,8 +228,18 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 
 	var sendBuffer [][]byte
 
-	// lx: AmneziaWG — CPS decoys (i1..i5) then Jc junk datagrams precede the
-	// initiation.
+	// lx: AmneziaWG — per-handshake decoys (sing-box-lx SPEC 009), then the
+	// static CPS decoys (i1..i5), then Jc junk datagrams precede the initiation.
+	if f := peer.device.decoyPackets.Load(); f != nil {
+		for _, decoy := range (*f)() {
+			if len(decoy) == 0 {
+				continue
+			}
+			buf := make([]byte, MessageEncapsulatingTransportSize+len(decoy))
+			copy(buf[MessageEncapsulatingTransportSize:], decoy)
+			sendBuffer = append(sendBuffer, buf)
+		}
+	}
 	for _, ipacket := range peer.device.ipackets {
 		if ipacket != nil {
 			buf := make([]byte, MessageEncapsulatingTransportSize+ipacket.ObfuscatedLen(0))

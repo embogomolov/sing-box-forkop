@@ -126,6 +126,12 @@ type Device struct {
 
 	ipackets [5]*obfChain
 
+	// lx: sing-box-lx SPEC 009 — decoy datagrams generated per handshake.
+	// When set, SendHandshakeInitiation sends these datagrams before the
+	// static i1..i5 CPS decoys; the caller builds a fresh set on every call
+	// (a QUIC Initial must change its DCID and ciphertext per session).
+	decoyPackets atomic.Pointer[DecoyPacketsFunc]
+
 	// lx: AmneziaWG 3.x (sing-box-lx SPEC 080). headerProtection.key is nil
 	// when header protection is off; the pointer is swapped whole by IpcSet.
 	headerProtection struct {
@@ -596,6 +602,21 @@ const (
 // Calls are serialized per peer and delivered in that peer's transition order. The
 // callback must be cheap and must not call back into Device.
 type PeerSessionStateFunc func(peer NoisePublicKey, state PeerSessionState)
+
+// DecoyPacketsFunc returns the decoy datagrams to send before one handshake
+// initiation. It is called on the handshake path and must be cheap; a nil or
+// empty result sends no dynamic decoy.
+type DecoyPacketsFunc func() [][]byte
+
+// SetDecoyPacketsFunc installs (or, with nil, removes) the per-handshake decoy
+// generator. lx: sing-box-lx SPEC 009.
+func (device *Device) SetDecoyPacketsFunc(f DecoyPacketsFunc) {
+	if f == nil {
+		device.decoyPackets.Store(nil)
+		return
+	}
+	device.decoyPackets.Store(&f)
+}
 
 // SetPeerLookupFunc sets the function used to look up peers by public key
 // when receiving packets for unknown peers.
