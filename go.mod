@@ -60,6 +60,7 @@ require (
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
+	lukechampine.com/blake3 v1.3.0
 )
 
 require (
@@ -158,7 +159,6 @@ require (
 	golang.org/x/tools v0.47.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
-	lukechampine.com/blake3 v1.3.0 // indirect
 )
 
 replace github.com/sagernet/wireguard-go => ./third_party/wireguard-go
