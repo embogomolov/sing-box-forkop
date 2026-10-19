@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-openconnect"
@@ -140,11 +141,7 @@ func (e *Endpoint) watchAuthForms(ctx context.Context) {
 		authChallenge := e.client.PendingAuthChallenge()
 		if authChallenge != nil && authChallenge.ID != loggedAuthChallengeID {
 			loggedAuthChallengeID = authChallenge.ID
-			if authChallenge.Browser != nil {
-				e.logger.Info("waiting for browser authentication")
-			} else {
-				e.logger.Info("waiting for authentication")
-			}
+			e.logger.Warn(authChallengeWaitMessage(authChallenge))
 		}
 		e.notifyStatusUpdated()
 		select {
@@ -153,6 +150,29 @@ func (e *Endpoint) watchAuthForms(ctx context.Context) {
 		case <-authChallengeUpdated:
 		}
 	}
+}
+
+func authChallengeWaitMessage(challenge *openconnect.AuthChallenge) string {
+	message := "waiting for authentication"
+	if challenge.Browser != nil {
+		message = "waiting for browser authentication"
+	} else if challenge.Form != nil && len(challenge.Form.Fields) > 0 {
+		fields := common.Map(challenge.Form.Fields, func(field openconnect.AuthFormField) string {
+			label := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(field.Label), ":"))
+			if label == "" {
+				return field.Name
+			}
+			return label
+		})
+		message += " of " + strings.Join(fields, ", ")
+	}
+	for _, detail := range []string{challenge.Error, challenge.Message} {
+		detail = strings.Join(strings.Fields(detail), " ")
+		if detail != "" {
+			message += ": " + detail
+		}
+	}
+	return message
 }
 
 func (e *Endpoint) watchActiveTransport(ctx context.Context) {
