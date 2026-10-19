@@ -91,8 +91,12 @@ func (m *ReferenceManager) Start(stage adapter.StartStage, scope *adapter.Scope)
 	if clashMode != nil {
 		clashMode.AddUpdateHook(m.subscriber)
 	}
-	m.update()
-	go m.loop()
+	// update reaches sing-mux's CloseIdleConnections, whose lock a URL test dial holds for the
+	// whole dial: the start does not wait for it, and update keeps a single goroutine
+	go func() {
+		m.update()
+		m.loop()
+	}()
 	return nil
 }
 
