@@ -396,6 +396,26 @@ func (c *VisionConn) NeedAdditionalReadDeadline() bool {
 	return true
 }
 
+// In direct mode the server sends the inner TLS records as they are and Read only passes
+// them on from the underlying connection, once the data buffered at the switch is out. The
+// connection then reports its read handshake complete and lets the copy loop read the
+// underlying connection itself: with its read waiter or splice instead of a buffer held
+// through every wait and a copy through user space. The read side alone: writes keep
+// going through Write. Only the reading goroutine changes this state, and the copy loop
+// asks from that goroutine.
+
+func (c *VisionConn) NeedHandshakeForRead() bool {
+	return !c.directRead || len(c.remainingBuffers) > 0
+}
+
+func (c *VisionConn) ReaderReplaceable() bool {
+	return c.directRead && len(c.remainingBuffers) == 0
+}
+
+func (c *VisionConn) UpstreamReader() any {
+	return c.netConn
+}
+
 func (c *VisionConn) Upstream() any {
 	return c.Conn
 }
