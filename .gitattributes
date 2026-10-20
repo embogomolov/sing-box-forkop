@@ -1,0 +1,3 @@
+# Go raw strings and embedded files keep the line endings of the checkout, so a
+# Windows checkout with CRLF would build a different binary. Everything is LF.
+* text=auto eol=lf
