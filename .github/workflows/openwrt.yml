@@ -1,7 +1,7 @@
 name: OpenWrt packages
 
-# A release tag builds and publishes both variants for every target; a push or a pull request
-# tests the core and builds both for arm64; a manual run builds what its inputs ask for.
+# A release tag builds and publishes every variant for every target; a push or a pull request
+# tests the core and builds every variant for arm64; a manual run builds what its inputs ask for.
 on:
   push:
     branches:
@@ -21,10 +21,11 @@ on:
         description: Variant
         type: choice
         options:
-          - both
+          - all
           - base
           - full
-        default: both
+          - tiny
+        default: all
       tags:
         description: "Custom tags instead of the variant, as ./build.sh --tags takes them"
         type: string
@@ -94,7 +95,7 @@ jobs:
           elif [ "$EVENT" = workflow_dispatch ]; then
             read -r -a requested <<< "$INPUT_TARGETS"
             targets=$(./build.sh --print-targets "${requested[@]}")
-            [ "$INPUT_VARIANT" = both ] || variants="$INPUT_VARIANT"
+            [ "$INPUT_VARIANT" = all ] || variants="$INPUT_VARIANT"
             [ -z "$INPUT_TAGS" ] || variants="custom"
           fi
           matrix=$(jq -cn --arg targets "$targets" --arg variants "$variants" --arg tags "${INPUT_TAGS:-}" '

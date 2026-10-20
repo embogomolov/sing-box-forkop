@@ -10,7 +10,7 @@ BUILD_CACHE="${FORKOP_BUILD_CACHE:-$HOME/.cache/sing-box-forkop}"
 CRONET_GO_PATH="${CRONET_GO_PATH:-$BUILD_CACHE/cronet-go}"
 
 TARGETS=(amd64 arm64 386 armv7 mipsle)
-VARIANTS=(base full)
+VARIANTS=(base full tiny)
 
 # Every build: the code a build without one of these would need is pruned
 # (release/forkop/prune.list). Forkop runs its dashboard, groups, latency tests and nft
@@ -29,6 +29,7 @@ BASE_TAGS=(
   with_gvisor with_quic with_wireguard with_openvpn with_trusttunnel
   with_vmess with_anytls
 )
+TINY_TAGS=(with_quic)
 # Forkop runs these tunnels on gVisor's network stack.
 GVISOR_TAGS=(with_wireguard with_openvpn with_openconnect with_tailscale)
 
@@ -42,7 +43,7 @@ Targets:
   amd64 arm64 386 armv7 mipsle         all of them when none is given
 
 Options:
-  -v, --variant NAME     base (the default) or full
+  -v, --variant NAME     base (the default), full or tiny
   -t, --tags LIST        a custom build, the required tags always in it:
                            with_quic,with_openvpn,...   exactly these optional tags
                            +with_openconnect,-with_quic   the variant changed
@@ -117,6 +118,7 @@ variant_tags() {
   case "$1" in
     base) tags=("${BASE_TAGS[@]}") ;;
     full) tags=("${OPTIONAL_TAGS[@]}") ;;
+    tiny) tags=("${TINY_TAGS[@]}") ;;
     *) return 1 ;;
   esac
   sorted_list "${REQUIRED_TAGS[@]}" "${tags[@]}"
