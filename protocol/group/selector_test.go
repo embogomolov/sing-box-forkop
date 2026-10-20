@@ -372,7 +372,7 @@ func TestURLTestInterruptsAfterProviderSelectionChanges(t *testing.T) {
 	group.storeHistory(newNode.Tag(), &adapter.URLTestHistory{Time: time.Now(), Delay: 1})
 	conn, peer := net.Pipe()
 	t.Cleanup(func() { peer.Close() })
-	group.interruptGroup.NewConn(conn, false, false)
+	group.interruptGroup.NewConn(conn, false)
 	if err = peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}

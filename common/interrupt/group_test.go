@@ -30,8 +30,8 @@ func TestNestedGroupsInterruptWithoutDeadlock(t *testing.T) {
 		barrierAPeer.Close()
 		barrierBPeer.Close()
 	})
-	groupA.NewConn(&closeBarrierConn{Conn: barrierA, barrier: barrier}, true, false)
-	groupB.NewConn(&closeBarrierConn{Conn: barrierB, barrier: barrier}, true, false)
+	groupA.NewConn(&closeBarrierConn{Conn: barrierA, barrier: barrier}, true)
+	groupB.NewConn(&closeBarrierConn{Conn: barrierB, barrier: barrier}, true)
 
 	connA, connAPeer := net.Pipe()
 	connB, connBPeer := net.Pipe()
@@ -39,10 +39,10 @@ func TestNestedGroupsInterruptWithoutDeadlock(t *testing.T) {
 		connAPeer.Close()
 		connBPeer.Close()
 	})
-	wrapperA := groupA.NewConn(connA, true, false)
-	wrapperB := groupB.NewConn(connB, true, false)
-	groupA.NewConn(wrapperB, true, false)
-	groupB.NewConn(wrapperA, true, false)
+	wrapperA := groupA.NewConn(connA, true)
+	wrapperB := groupB.NewConn(connB, true)
+	groupA.NewConn(wrapperB, true)
+	groupB.NewConn(wrapperA, true)
 
 	done := make(chan struct{}, 2)
 	go func() {

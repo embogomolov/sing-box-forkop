@@ -129,7 +129,7 @@ func TestURLTestGroupSelectsWhileAnInterruptClosesConnections(t *testing.T) {
 	client, server := net.Pipe()
 	defer server.Close()
 	release := make(chan struct{})
-	urlTestGroup.interruptGroup.NewConn(&slowCloseConn{Conn: client, release: release}, false, false)
+	urlTestGroup.interruptGroup.NewConn(&slowCloseConn{Conn: client, release: release}, false)
 	urlTestGroup.storeHistory(second.Tag(), &adapter.URLTestHistory{Time: time.Now(), Delay: 1})
 	var waitGroup sync.WaitGroup
 	waitGroup.Add(1)

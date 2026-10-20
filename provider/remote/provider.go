@@ -15,7 +15,6 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/provider"
-	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -163,8 +162,7 @@ func (s *ProviderRemote) References() []string {
 // Update logs a failure for the schedule and the Clash API alike, since only the log names the
 // provider.
 func (s *ProviderRemote) Update() error {
-	ctx := interrupt.ContextWithIsProviderConnection(s.ctx)
-	err := s.fetch(ctx)
+	err := s.fetch(s.ctx)
 	if err != nil {
 		s.logger.Error("update outbound provider: ", err)
 	}

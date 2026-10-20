@@ -551,7 +551,7 @@ func (s *Fallback) DialContext(ctx context.Context, network string, destination 
 	} else {
 		closeCancel()
 	}
-	return s.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx), interrupt.IsProviderConnectionFromContext(ctx)), nil
+	return s.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 }
 
 // dialCandidates dials candidates in order and returns the first connection. A
@@ -651,7 +651,7 @@ func (s *Fallback) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		if err == nil {
 			attempt.keep()
 			s.recordDialSuccess(candidate)
-			return s.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx), interrupt.IsProviderConnectionFromContext(ctx)), nil
+			return s.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 		}
 		err = attempt.fail(err)
 		lastError = err
@@ -669,13 +669,13 @@ func (s *Fallback) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 
 func (s *Fallback) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	ctx = interrupt.ContextWithIsExternalConnection(ctx)
-	conn = s.interruptGroup.NewConn(conn, true, interrupt.IsProviderConnectionFromContext(ctx))
+	conn = s.interruptGroup.NewConn(conn, true)
 	s.connection.NewConnection(ctx, s, conn, metadata, onClose)
 }
 
 func (s *Fallback) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	ctx = interrupt.ContextWithIsExternalConnection(ctx)
-	conn = s.interruptGroup.NewSingPacketConn(conn, true, interrupt.IsProviderConnectionFromContext(ctx))
+	conn = s.interruptGroup.NewSingPacketConn(conn, true)
 	s.connection.NewPacketConnection(ctx, s, conn, metadata, onClose)
 }
 

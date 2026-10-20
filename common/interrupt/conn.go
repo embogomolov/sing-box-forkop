@@ -68,10 +68,6 @@ type SingPacketConn struct {
 	element *list.Element[*groupConnItem]
 }
 
-/*func (c *SingPacketConn) MarkAsInternal() {
-	c.element.Value.internal = true
-}*/
-
 func (c *SingPacketConn) Close() error {
 	c.group.access.Lock()
 	c.group.connections.Remove(c.element)
