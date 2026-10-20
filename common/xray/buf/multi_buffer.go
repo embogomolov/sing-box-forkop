@@ -3,7 +3,6 @@ package buf
 import (
 	"io"
 
-	"github.com/sagernet/sing-box/common/xray"
 	"github.com/sagernet/sing-box/common/xray/errors"
 	"github.com/sagernet/sing-box/common/xray/serial"
 )
@@ -122,53 +121,6 @@ func SplitBytes(mb MultiBuffer, b []byte) (MultiBuffer, int) {
 	return mb, totalBytes
 }
 
-// SplitFirstBytes splits the first buffer from MultiBuffer, and then copy its content into the given slice.
-func SplitFirstBytes(mb MultiBuffer, p []byte) (MultiBuffer, int) {
-	mb, b := SplitFirst(mb)
-	if b == nil {
-		return mb, 0
-	}
-	n := copy(p, b.Bytes())
-	b.Release()
-	return mb, n
-}
-
-// Compact returns another MultiBuffer by merging all content of the given one together.
-func Compact(mb MultiBuffer) MultiBuffer {
-	if len(mb) == 0 {
-		return mb
-	}
-
-	mb2 := make(MultiBuffer, 0, len(mb))
-	last := mb[0]
-
-	for i := 1; i < len(mb); i++ {
-		curr := mb[i]
-		if curr.Len() > last.Available() {
-			mb2 = append(mb2, last)
-			last = curr
-		} else {
-			common.Must2(last.ReadFrom(curr))
-			curr.Release()
-		}
-	}
-
-	mb2 = append(mb2, last)
-	return mb2
-}
-
-// SplitFirst splits the first Buffer from the beginning of the MultiBuffer.
-func SplitFirst(mb MultiBuffer) (MultiBuffer, *Buffer) {
-	if len(mb) == 0 {
-		return mb, nil
-	}
-
-	b := mb[0]
-	mb[0] = nil
-	mb = mb[1:]
-	return mb, b
-}
-
 // SplitSize splits the beginning of the MultiBuffer into another one, for at most size bytes.
 func SplitSize(mb MultiBuffer, size int32) (MultiBuffer, MultiBuffer) {
 	if len(mb) == 0 {
@@ -201,38 +153,6 @@ func SplitSize(mb MultiBuffer, size int32) (MultiBuffer, MultiBuffer) {
 		mb = mb[endIndex:]
 	}
 	return mb, r
-}
-
-// SplitMulti splits the beginning of the MultiBuffer into first one, the index i and after into second one
-func SplitMulti(mb MultiBuffer, i int) (MultiBuffer, MultiBuffer) {
-	mb2 := make(MultiBuffer, 0, len(mb))
-	if i < len(mb) && i >= 0 {
-		mb2 = append(mb2, mb[i:]...)
-		for j := i; j < len(mb); j++ {
-			mb[j] = nil
-		}
-		mb = mb[:i]
-	}
-	return mb, mb2
-}
-
-// WriteMultiBuffer writes all buffers from the MultiBuffer to the Writer one by one, and return error if any, with leftover MultiBuffer.
-func WriteMultiBuffer(writer io.Writer, mb MultiBuffer) (MultiBuffer, error) {
-	for {
-		mb2, b := SplitFirst(mb)
-		mb = mb2
-		if b == nil {
-			break
-		}
-
-		_, err := writer.Write(b.Bytes())
-		b.Release()
-		if err != nil {
-			return mb, err
-		}
-	}
-
-	return nil, nil
 }
 
 // Len returns the total number of bytes in the MultiBuffer.
@@ -272,39 +192,8 @@ type MultiBufferContainer struct {
 	MultiBuffer
 }
 
-// Read implements io.Reader.
-func (c *MultiBufferContainer) Read(b []byte) (int, error) {
-	if c.MultiBuffer.IsEmpty() {
-		return 0, io.EOF
-	}
-
-	mb, nBytes := SplitBytes(c.MultiBuffer, b)
-	c.MultiBuffer = mb
-	return nBytes, nil
-}
-
-// ReadMultiBuffer implements Reader.
-func (c *MultiBufferContainer) ReadMultiBuffer() (MultiBuffer, error) {
-	mb := c.MultiBuffer
-	c.MultiBuffer = nil
-	return mb, nil
-}
-
 // Write implements io.Writer.
 func (c *MultiBufferContainer) Write(b []byte) (int, error) {
 	c.MultiBuffer = MergeBytes(c.MultiBuffer, b)
 	return len(b), nil
-}
-
-// WriteMultiBuffer implements Writer.
-func (c *MultiBufferContainer) WriteMultiBuffer(b MultiBuffer) error {
-	mb, _ := MergeMulti(c.MultiBuffer, b)
-	c.MultiBuffer = mb
-	return nil
-}
-
-// Close implements io.Closer.
-func (c *MultiBufferContainer) Close() error {
-	c.MultiBuffer = ReleaseMulti(c.MultiBuffer)
-	return nil
 }

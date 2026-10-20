@@ -46,17 +46,6 @@ func GetPool(size int32) *sync.Pool {
 	return nil
 }
 
-// Alloc returns a byte slice with at least the given size. Minimum size of returned slice is 2048.
-//
-// xray:api:stable
-func Alloc(size int32) []byte {
-	pool := GetPool(size)
-	if pool != nil {
-		return pool.Get().([]byte)
-	}
-	return make([]byte, size)
-}
-
 // Free puts a byte slice into the internal pool.
 //
 // xray:api:stable

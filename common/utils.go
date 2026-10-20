@@ -2,14 +2,12 @@ package common
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json/badoption"
 )
 
@@ -67,13 +65,4 @@ func DecodeBase64URLSafe(content string) (string, error) {
 		return content, nil
 	}
 	return string(result), nil
-}
-
-func ParseXHTTPRange(value string) (option.Range[int], error) {
-	result := option.Range[int]{}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return result, err
-	}
-	return result, result.UnmarshalJSON(encoded)
 }

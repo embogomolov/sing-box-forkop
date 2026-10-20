@@ -21,13 +21,3 @@ func (n Network) SystemString() string {
 		return "unknown"
 	}
 }
-
-// HasNetwork returns true if the network list has a certain network.
-func HasNetwork(list []Network, network Network) bool {
-	for _, value := range list {
-		if value == network {
-			return true
-		}
-	}
-	return false
-}

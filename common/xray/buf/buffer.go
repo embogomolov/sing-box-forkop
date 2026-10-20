@@ -51,55 +51,6 @@ func New() *Buffer {
 	}
 }
 
-// NewExisted creates a standard size Buffer with an existed bytearray, managed.
-func NewExisted(b []byte) *Buffer {
-	if cap(b) < Size {
-		panic("Invalid buffer")
-	}
-
-	oLen := len(b)
-	if oLen < Size {
-		b = b[:Size]
-	}
-
-	return &Buffer{
-		v:   b,
-		end: int32(oLen),
-	}
-}
-
-// FromBytes creates a Buffer with an existed bytearray, unmanaged.
-func FromBytes(b []byte) *Buffer {
-	return &Buffer{
-		v:         b,
-		end:       int32(len(b)),
-		ownership: unmanaged,
-	}
-}
-
-// StackNew creates a new Buffer object on stack, managed.
-// This method is for buffers that is released in the same function.
-func StackNew() Buffer {
-	buf := pool.Get().([]byte)
-	if cap(buf) >= Size {
-		buf = buf[:Size]
-	} else {
-		buf = make([]byte, Size)
-	}
-
-	return Buffer{
-		v: buf,
-	}
-}
-
-// NewWithSize creates a Buffer with 0 length and capacity with at least the given size, bytespool's.
-func NewWithSize(size int32) *Buffer {
-	return &Buffer{
-		v:         bytespool.Alloc(size),
-		ownership: bytespools,
-	}
-}
-
 // Release recycles the buffer into an internal buffer pool.
 func (b *Buffer) Release() {
 	if b == nil || b.v == nil || b.ownership == unmanaged {

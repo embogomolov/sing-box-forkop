@@ -25,17 +25,6 @@ func Close(obj interface{}) error {
 	return nil
 }
 
-// Interrupt calls Interrupt() if object implements Interruptible interface, or Close() if the object implements Closable interface.
-//
-// xray:api:beta
-func Interrupt(obj interface{}) error {
-	if c, ok := obj.(Interruptible); ok {
-		c.Interrupt()
-		return nil
-	}
-	return Close(obj)
-}
-
 // Runnable is the interface for objects that can start to work and stop on demand.
 type Runnable interface {
 	// Start starts the runnable object. Upon the method returning nil, the object begins to function properly.
