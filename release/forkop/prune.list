@@ -1,0 +1,253 @@
+# Paths of upstream sing-box and of the third_party modules this core does not
+# carry. release/forkop/prune.sh deletes them after every upstream merge and
+# release/forkop/third-party.sh leaves them out of a module move; nothing kept
+# may import them. Patterns are git
+# pathspecs, one per line; a comment says why the group goes.
+# release/forkop/check-tree.sh fails on a Go file no stock build compiles and on a
+# package no stock build links: such a path belongs here.
+
+# Documentation, integration tests, lint settings and the build machinery of
+# upstream releases: this core builds with build.sh.
+docs
+mkdocs.yml
+test
+.golangci.yml
+Dockerfile
+Dockerfile.binary
+Makefile
+.fpm_openwrt
+.fpm_pacman
+.fpm_systemd
+.github/FUNDING.yml
+.github/workflows/build.yml
+.github/workflows/docker.yml
+.github/workflows/lint.yml
+.github/workflows/linux.yml
+.github/workflows/stale.yml
+.github/workflows/test.yml
+.github/ISSUE_TEMPLATE
+.github/build_alpine_apk.sh
+.github/build_openwrt_apk.sh
+.github/deb2ipk.sh
+.github/detect_track.sh
+.github/go_ios_cpu_features.patch
+.github/patch_go_for_ios.sh
+.github/renovate.json
+.github/setup_go_for_macos1013.sh
+.github/setup_go_for_windows7.sh
+.github/update_clients.sh
+.github/update_cronet.sh
+.github/update_cronet_dev.sh
+.github/update_dependencies.sh
+release/completions
+release/local
+release/DEFAULT_BUILD_TAGS
+release/DEFAULT_BUILD_TAGS_OTHERS
+release/DEFAULT_BUILD_TAGS_WINDOWS
+release/config/sing-box-split-dns.xml
+release/config/sing-box.confd
+release/config/sing-box.initd
+release/config/sing-box.postinst
+release/config/sing-box.rules
+release/config/sing-box.service
+release/config/sing-box.sysusers
+release/config/sing-box@.service
+cmd/sing-box/generate_completions.go
+constant/goos/gengoos.go
+
+# The graphical clients, the mobile library and the desktop daemon, with the
+# command server and the sing-box API that drive them, and the packages only
+# the clients import.
+.gitmodules
+clients
+experimental/libbox
+experimental/boxdd
+cmd/internal
+daemon
+service/api
+service/oomkiller
+include/api.go
+include/api_stub.go
+include/oom_killer.go
+include/tz_android.go
+include/tz_ios.go
+cmd/sing-box/cmd_api*.go
+option/api.go
+option/oom_killer.go
+common/geoip
+common/pipelistener
+
+# Services a router running Forkop never configures: Claude Code and Codex
+# proxies, USB over IP, the Shadowsocks server manager, systemd-resolved, ACME
+# and Cloudflare Origin CA certificates.
+service/ccm
+service/ocm
+service/usbip
+service/ssmapi
+service/resolved
+service/acme
+service/origin_ca
+include/ccm.go
+include/ccm_stub.go
+include/ccm_stub_darwin.go
+include/ocm.go
+include/ocm_stub.go
+include/usbip.go
+include/usbip_stub.go
+include/acme.go
+include/acme_stub.go
+adapter/usbip.go
+adapter/usbip_stub.go
+common/tls/acme.go
+common/tls/acme_logger.go
+option/acme.go
+option/ccm.go
+option/ocm.go
+option/origin_ca.go
+option/resolved.go
+option/ssmapi.go
+option/usbip.go
+
+# Inbounds and DNS servers outside Forkop's tproxy design: the TUN inbound, the
+# cloudflared inbound, DNS servers learned over DHCP, and the V2Ray stats API.
+protocol/tun
+protocol/cloudflare
+include/cloudflared.go
+include/cloudflared_stub.go
+option/cloudflared.go
+dns/transport/dhcp
+include/dhcp.go
+include/dhcp_stub.go
+constant/dhcp.go
+experimental/v2rayapi
+include/v2rayapi.go
+include/v2rayapi_stub.go
+
+# The full gRPC transport behind with_grpc, a tag no build sets: the lightweight
+# transport serves every gRPC node, as in upstream's own releases. The notices
+# for the retired with_ech and with_reality_server tags go with it.
+transport/v2ray/grpc.go
+transport/v2raygrpc
+common/tls/ech_tag_stub.go
+common/tls/reality_stub.go
+
+# Stubs for a build without a tag every build carries (REQUIRED_TAGS in
+# build.sh), and for a Go older than go.mod allows.
+cmd/sing-box/cmd_tools_fetch_http3_stub.go
+common/badtls/read_wait_stub.go
+common/httpclient/http3_transport_stub.go
+common/ktls/ktls_stub_nolinkname.go
+common/ktls/ktls_stub_oldgo.go
+common/networkquality/http3_stub.go
+common/tls/utls_stub.go
+common/urltest/keep_session_quic_stub.go
+constant/quic_stub.go
+include/clashapi_stub.go
+include/openvpn_stub.go
+include/quic_stub.go
+include/wireguard_stub.go
+transport/openconnect/device_stack_stub.go
+transport/openvpn/device_stack_stub.go
+transport/wireguard/device_stack_stub.go
+
+# Code for other systems: every build of this core runs on Linux. Windows,
+# macOS, iOS and tvOS, Android and the BSDs take their files, the packages only
+# they import, and the stubs for systems without a feature.
+adapter/certificate_darwin.go
+cmd/sing-box/cmd_run_userns_other.go
+common/certificate/store_darwin.go
+common/certificate/system_android.go
+common/httpclient/apple_transport_darwin.go
+common/httpclient/apple_transport_darwin_test.go
+common/jni
+common/ktls/ktls_stub_nonlinux.go
+common/netns/manager_stub.go
+common/process/searcher_darwin.go
+common/process/searcher_darwin_shared.go
+common/process/searcher_stub.go
+common/process/searcher_windows.go
+common/redir/redir_darwin.go
+common/redir/redir_other.go
+common/redir/tproxy_other.go
+common/schannel
+common/settings/proxy_android.go
+common/settings/proxy_darwin.go
+common/settings/proxy_stub.go
+common/settings/proxy_windows.go
+common/settings/wifi_stub.go
+common/settings/wifi_windows.go
+common/tls/apple_client.go
+common/tls/apple_client_platform.go
+common/tls/apple_client_platform_benchmark_test.go
+common/tls/apple_client_platform_dispatch_test.go
+common/tls/apple_client_platform_dispatch_testhelper_darwin.go
+common/tls/apple_client_platform_test.go
+common/tls/system_client_engine.go
+common/tls/windows_client.go
+common/tls/windows_client_test.go
+common/tlsfragment/wait_darwin.go
+common/tlsfragment/wait_stub.go
+common/tlsfragment/wait_windows.go
+common/tlsspoof/integration_darwin_test.go
+common/tlsspoof/integration_windows_test.go
+common/tlsspoof/packet_darwin.go
+common/tlsspoof/raw_darwin.go
+common/tlsspoof/raw_stub.go
+common/tlsspoof/raw_windows.go
+common/windivert
+constant/goos/zgoos_aix.go
+constant/goos/zgoos_android.go
+constant/goos/zgoos_darwin.go
+constant/goos/zgoos_dragonfly.go
+constant/goos/zgoos_freebsd.go
+constant/goos/zgoos_hurd.go
+constant/goos/zgoos_illumos.go
+constant/goos/zgoos_ios.go
+constant/goos/zgoos_js.go
+constant/goos/zgoos_netbsd.go
+constant/goos/zgoos_openbsd.go
+constant/goos/zgoos_plan9.go
+constant/goos/zgoos_solaris.go
+constant/goos/zgoos_windows.go
+constant/goos/zgoos_zos.go
+constant/os_tvos.go
+debug_stub.go
+dns/transport/hosts/hosts_windows.go
+dns/transport/local/local_darwin.go
+dns/transport/local/local_darwin_test.go
+dns/transport/local/local_resolved_stub.go
+dns/transport/local/systemconfig/source_darwin.go
+dns/transport/local/systemconfig/source_windows.go
+protocol/bridge/backend_darwin.go
+protocol/bridge/backend_stub.go
+protocol/bridge/backend_windows.go
+protocol/bridge/linkname_darwin.go
+protocol/bridge/nat_windows.go
+protocol/bridge/pf_darwin.go
+protocol/bridge/reservation_windows.go
+protocol/bridge/route_darwin.go
+protocol/bridge/rules_darwin.go
+protocol/bridge/service_darwin.go
+protocol/openvpn/socket_buffer.go
+protocol/tailscale/hostinfo_tvos.go
+protocol/tailscale/platform_tvos.go
+protocol/tailscale/tailssh/server_helper_windows.go
+protocol/tailscale/tailssh/session_android.go
+protocol/tailscale/tailssh/session_ios.go
+protocol/tailscale/tailssh/session_windows.go
+protocol/tailscale/tailssh/user_android.go
+protocol/tailscale/tailssh/user_windows.go
+protocol/tailscale/tun_device_windows.go
+route/neighbor_resolver_darwin.go
+route/neighbor_resolver_stub.go
+route/neighbor_table_darwin.go
+route/network_environment_darwin.go
+route/network_environment_stub.go
+route/network_environment_windows.go
+service/powerreport/device_darwin.go
+service/powerreport/syscall_windows.go
+service/powerreport/sysstats_darwin.go
+service/powerreport/sysstats_darwin_stub.go
+service/powerreport/sysstats_stub.go
+service/powerreport/sysstats_windows.go
+service/powerreport/zsyscall_windows.go

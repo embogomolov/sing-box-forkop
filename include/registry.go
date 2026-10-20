@@ -35,13 +35,8 @@ import (
 	"github.com/sagernet/sing-box/protocol/ssh"
 	"github.com/sagernet/sing-box/protocol/tor"
 	"github.com/sagernet/sing-box/protocol/trojan"
-	"github.com/sagernet/sing-box/protocol/tun"
 	"github.com/sagernet/sing-box/protocol/vless"
 	"github.com/sagernet/sing-box/protocol/vmess"
-	"github.com/sagernet/sing-box/service/api"
-	originca "github.com/sagernet/sing-box/service/origin_ca"
-	"github.com/sagernet/sing-box/service/resolved"
-	"github.com/sagernet/sing-box/service/ssmapi"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -52,7 +47,6 @@ func Context(ctx context.Context) context.Context {
 func InboundRegistry() *inbound.Registry {
 	registry := inbound.NewRegistry()
 
-	tun.RegisterInbound(registry)
 	redirect.RegisterRedirect(registry)
 	redirect.RegisterTProxy(registry)
 	direct.RegisterInbound(registry)
@@ -71,7 +65,6 @@ func InboundRegistry() *inbound.Registry {
 	anytls.RegisterInbound(registry)
 
 	registerQUICInbounds(registry)
-	registerCloudflaredInbound(registry)
 	registerStubForRemovedInbounds(registry)
 
 	return registry
@@ -129,10 +122,8 @@ func DNSTransportRegistry() *dns.TransportRegistry {
 	local.RegisterTransport(registry)
 	mdns.RegisterTransport(registry)
 	fakeip.RegisterTransport(registry)
-	resolved.RegisterTransport(registry)
 
 	registerQUICTransports(registry)
-	registerDHCPTransport(registry)
 	registerTailscaleTransport(registry)
 	registerOpenConnectDNSTransport(registry)
 	registerOpenVPNDNSTransport(registry)
@@ -143,16 +134,8 @@ func DNSTransportRegistry() *dns.TransportRegistry {
 func ServiceRegistry() *service.Registry {
 	registry := service.NewRegistry()
 
-	api.RegisterService(registry)
-	resolved.RegisterService(registry)
-	ssmapi.RegisterService(registry)
-
 	registerQUICServices(registry)
 	registerDERPService(registry)
-	registerCCMService(registry)
-	registerOCMService(registry)
-	registerOOMKillerService(registry)
-	registerUSBIPServices(registry)
 
 	return registry
 }
@@ -160,9 +143,7 @@ func ServiceRegistry() *service.Registry {
 func CertificateProviderRegistry() *certificate.Registry {
 	registry := certificate.NewRegistry()
 
-	registerACMECertificateProvider(registry)
 	registerTailscaleCertificateProvider(registry)
-	originca.RegisterCertificateProvider(registry)
 
 	return registry
 }
