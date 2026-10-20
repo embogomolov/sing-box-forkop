@@ -321,3 +321,9 @@ third_party/gvisor/pkg/timing
 third_party/gvisor/pkg/unet
 third_party/gvisor/pkg/xdp
 third_party/gvisor/sandboxexec
+
+# third_party/sing-openvpn: the module's own CI, lint and build tooling.
+third_party/sing-openvpn/.gitignore
+third_party/sing-openvpn/.golangci.yml
+third_party/sing-openvpn/Makefile
+third_party/sing-openvpn/.github
