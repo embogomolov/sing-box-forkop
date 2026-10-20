@@ -71,6 +71,8 @@ func InboundRegistry() *inbound.Registry {
 	anytls.RegisterInbound(registry)
 	mieru.RegisterInbound(registry)
 
+	registerTrustTunnelInbound(registry)
+
 	registerQUICInbounds(registry)
 	registerStubForRemovedInbounds(registry)
 
@@ -102,6 +104,8 @@ func OutboundRegistry() *outbound.Registry {
 	vless.RegisterOutbound(registry)
 	mieru.RegisterOutbound(registry)
 	anytls.RegisterOutbound(registry)
+
+	registerTrustTunnelOutbound(registry)
 
 	parser.RegisterOutbound(registry)
 
