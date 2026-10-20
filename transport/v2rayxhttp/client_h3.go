@@ -35,6 +35,8 @@ func newHTTP3Transport(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, o
 		// https://github.com/quic-go/quic-go/blob/b8ea5c798155950fb5bbfdd06cad1939c9355878/http3/client.go#L36-L39
 		MaxIncomingStreams: -1,
 		KeepAlivePeriod:    keepAlivePeriod,
+		// the QUIC handshake of Xray-core's client looks like Chrome's
+		ChromeParrot: chromeParrot(tlsConfig),
 	}
 	return &http3.Transport{
 		QUICConfig: quicConfig,
@@ -54,4 +56,11 @@ func newHTTP3Transport(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, o
 			return conn, nil
 		},
 	}
+}
+
+// quic-go's Chrome profile refuses a TLS configuration that verifies the server by itself, as
+// one with disable_sni does, or that carries a client certificate.
+func chromeParrot(tlsConfig tls.Config) bool {
+	std, err := tlsConfig.STDConfig()
+	return err == nil && std.VerifyConnection == nil && len(std.Certificates) == 0
 }
