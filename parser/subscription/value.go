@@ -1,12 +1,14 @@
 package subscription
 
 import (
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/vless/encryption"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badoption"
@@ -74,6 +76,54 @@ func unmarshalNumber(content []byte) (int64, error) {
 		return 0, E.New("invalid number: ", text)
 	}
 	return number, nil
+}
+
+// Range is a range of whole numbers as generators write one: a number, "from-to" or an object, a
+// whole number also with a fraction (100.0, as Python writes a float).
+type Range option.Range[int]
+
+func (r *Range) UnmarshalJSON(content []byte) error {
+	var (
+		text   string
+		number float64
+		err    error
+	)
+	switch {
+	case json.Unmarshal(content, &text) == nil:
+		from, to, isRange := strings.Cut(strings.TrimSpace(text), "-")
+		if !isRange {
+			to = from
+		}
+		if r.From, err = wholeNumber(from); err != nil {
+			return err
+		}
+		if r.To, err = wholeNumber(to); err != nil {
+			return err
+		}
+	case json.Unmarshal(content, &number) == nil:
+		if r.From, err = wholeNumber(strconv.FormatFloat(number, 'f', -1, 64)); err != nil {
+			return err
+		}
+		r.To = r.From
+	default:
+		return (*option.Range[int])(r).UnmarshalJSON(content)
+	}
+	if r.From > r.To {
+		return E.New("invalid range: ", text)
+	}
+	return nil
+}
+
+func wholeNumber(text string) (int, error) {
+	text = strings.TrimSpace(text)
+	if number, err := strconv.Atoi(text); err == nil {
+		return number, nil
+	}
+	value, err := strconv.ParseFloat(text, 64)
+	if err != nil || value != math.Trunc(value) || math.Abs(value) > math.MaxInt32 {
+		return 0, E.New("invalid number: ", text)
+	}
+	return int(value), nil
 }
 
 // Bool is a boolean written as a boolean, as 0 and 1, or as text.
@@ -166,16 +216,19 @@ func isSetValue(value reflect.Value) bool {
 	}
 }
 
-// CheckVLESSFlow refuses a VLESS flow sing-box cannot speak. The flow decides
+// VLESSFlow reads a VLESS flow and refuses one sing-box cannot speak. The flow decides
 // how the payload is framed after the handshake, and it is announced to the
 // server, so a client that quietly drops it is answered by a server still
 // framing its side the other way.
-func CheckVLESSFlow(flow string) error {
+func VLESSFlow(flow string) (string, error) {
 	switch flow {
 	case "", "xtls-rprx-vision":
-		return nil
+		return flow, nil
+	case "xtls-rprx-vision-udp443":
+		// Xray-core's client lets UDP to port 443 through with it and announces plain Vision
+		return "xtls-rprx-vision", nil
 	}
-	return E.New("unsupported VLESS flow: ", flow)
+	return "", E.New("unsupported VLESS flow: ", flow)
 }
 
 // String is a text field a generator may have written as a number or a boolean, as Clash reads its
@@ -220,13 +273,13 @@ func QUICSecurity(options *option.OutboundTLSOptions) *option.OutboundTLSOptions
 	return options
 }
 
-// VLESSEncryption maps "none" to the empty field, as sing-box means it, so a server imported from
-// any format comes out identical.
-func VLESSEncryption(encryption string) string {
-	if encryption == "none" {
-		return ""
+// VLESSEncryption passes VLESS Encryption on as it is written; any other value, which Xray-core
+// refuses, reads as none, the empty field.
+func VLESSEncryption(setting string) string {
+	if strings.HasPrefix(setting, encryption.Prefix+".") {
+		return setting
 	}
-	return encryption
+	return ""
 }
 
 // PortRanges reads a port hopping list - "443,20000-30000", with slashes in

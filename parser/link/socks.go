@@ -1,16 +1,18 @@
 package link
 
 import (
-	"net/url"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/sagernet/sing-box/common"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/parser/subscription"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
 func parseSOCKSLink(link string) (option.Outbound, error) {
-	linkURL, err := url.Parse(link)
+	linkURL, err := parseLinkURL(link)
 	if err != nil {
 		return option.Outbound{}, err
 	}
@@ -37,6 +39,14 @@ func parseSOCKSLink(link string) (option.Outbound, error) {
 	if linkURL.User != nil {
 		options.Username = linkURL.User.Username()
 		options.Password, _ = linkURL.User.Password()
+		if _, hasPassword := linkURL.User.Password(); !hasPassword && linkURL.Scheme == "socks" {
+			// v2rayN writes "user:password" in base64
+			if decoded, isEncoded := subscription.DecodeBase64(options.Username); isEncoded && utf8.ValidString(decoded) {
+				if username, password, found := strings.Cut(decoded, ":"); found {
+					options.Username, options.Password = username, password
+				}
+			}
+		}
 	}
 	return option.Outbound{
 		Type:    C.TypeSOCKS,

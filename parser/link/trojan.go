@@ -1,7 +1,6 @@
 package link
 
 import (
-	"net/url"
 	"strings"
 
 	C "github.com/sagernet/sing-box/constant"
@@ -10,7 +9,7 @@ import (
 )
 
 func parseTrojanLink(link string) (option.Outbound, error) {
-	linkURL, err := url.Parse(link)
+	linkURL, err := parseLinkURL(link)
 	if err != nil {
 		return option.Outbound{}, err
 	}

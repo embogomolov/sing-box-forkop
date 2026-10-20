@@ -2,7 +2,6 @@ package link
 
 import (
 	"encoding/json"
-	"net/url"
 	"strings"
 
 	C "github.com/sagernet/sing-box/constant"
@@ -104,7 +103,7 @@ func parseVMessLink(link string) (option.Outbound, error) {
 }
 
 func parseVMessURL(link string) (option.Outbound, error) {
-	linkURL, err := url.Parse(link)
+	linkURL, err := parseLinkURL(link)
 	if err != nil {
 		return option.Outbound{}, err
 	}
@@ -182,7 +181,7 @@ func vmessTLS(payload vmessPayload) (*option.OutboundTLSOptions, error) {
 }
 
 func vmessTransport(payload vmessPayload, tls *option.OutboundTLSOptions) (*option.V2RayTransportOptions, error) {
-	switch string(payload.Network) {
+	switch strings.ToLower(string(payload.Network)) {
 	case "", "tcp", "raw":
 		var hosts []string
 		if payload.Host != "" {

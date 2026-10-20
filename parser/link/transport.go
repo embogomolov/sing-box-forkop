@@ -15,7 +15,7 @@ import (
 // linkTransport reads the transport a share link describes. The link format is
 // Xray's, so the parameter names and their meanings are Xray's too.
 func linkTransport(q query, tls *option.OutboundTLSOptions) (*option.V2RayTransportOptions, error) {
-	switch q.get("type", "net") {
+	switch strings.ToLower(q.get("type", "net")) {
 	case "", "tcp", "raw", "none":
 		return tcpHeaderTransport(q.get("headerType"), q.list("host"), q.get("path"), tls)
 	case "ws", "websocket":

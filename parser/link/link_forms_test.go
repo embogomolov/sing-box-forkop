@@ -1,0 +1,142 @@
+package link
+
+import (
+	"encoding/base64"
+	"net/url"
+	"testing"
+
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
+)
+
+func parsedVLESS(t *testing.T, link string) *option.VLESSOutboundOptions {
+	t.Helper()
+	outbound, err := ParseSubscriptionLink(link)
+	if err != nil {
+		t.Fatalf("%s: %v", link, err)
+	}
+	return outbound.Options.(*option.VLESSOutboundOptions)
+}
+
+// Parameter names come in any case, and a link copied out of HTML has "&amp;" between them.
+func TestLinkParameterNamesAsGeneratorsWriteThem(t *testing.T) {
+	for _, link := range []string{
+		"vless://" + xrayTestUUID + "@example.org:443?Security=tls&SNI=sni.example&Type=WS&Path=%2Fws#n",
+		"vless://" + xrayTestUUID + "@example.org:443?security=tls&amp;sni=sni.example&amp;type=ws&amp;path=%2Fws#n",
+		"vless://" + xrayTestUUID + "@example.org:443?security=TLS&serverName=sni.example&type=ws&path=%2Fws#n",
+	} {
+		options := parsedVLESS(t, link)
+		if options.TLS == nil || options.TLS.ServerName != "sni.example" {
+			t.Errorf("%s: TLS %+v", link, options.TLS)
+		}
+		if options.Transport == nil || options.Transport.Type != C.V2RayTransportTypeWebsocket || options.Transport.WebsocketOptions.Path != "/ws" {
+			t.Errorf("%s: transport %+v", link, options.Transport)
+		}
+	}
+}
+
+// A Trojan password in base64 holds "/" and is not always escaped.
+func TestLinkPasswordWithSlash(t *testing.T) {
+	outbound, err := ParseSubscriptionLink("trojan://pa/ss+w=@example.org:443?sni=sni.example#n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := outbound.Options.(*option.TrojanOutboundOptions)
+	if options.Password != "pa/ss+w=" || options.Server != "example.org" || options.ServerPort != 443 {
+		t.Fatalf("password %q, server %s:%d", options.Password, options.Server, options.ServerPort)
+	}
+}
+
+func TestLinkVLESSValuesOfOtherClients(t *testing.T) {
+	const reality = "&security=reality&sni=www.example.com&pbk=SSw7I859PPdN4DQ7fxV9fobXM61Ms3mqZRlIY1aJvHQ"
+	if flow := parsedVLESS(t, "vless://"+xrayTestUUID+"@example.org:443?flow=xtls-rprx-vision-udp443"+reality+"#n").Flow; flow != "xtls-rprx-vision" {
+		t.Errorf("flow %q, want plain Vision", flow)
+	}
+	for value, want := range map[string]string{"packet": "packetaddr", "xudp": "xudp", "none": ""} {
+		encoding := parsedVLESS(t, "vless://"+xrayTestUUID+"@example.org:443?packetEncoding="+value+reality+"#n").PacketEncoding
+		if got := ""; encoding != nil {
+			got = *encoding
+			if got != want {
+				t.Errorf("packet encoding %s: %q, want %q", value, got, want)
+			}
+		} else if want != "" {
+			t.Errorf("packet encoding %s: none, want %q", value, want)
+		}
+	}
+	const setting = "mlkem768x25519plus.native.0rtt.SSw7I859PPdN4DQ7fxV9fobXM61Ms3mqZRlIY1aJvHQ"
+	for value, want := range map[string]string{"aes-128-gcm": "", "auto": "", "none": "", setting: setting} {
+		if encryption := parsedVLESS(t, "vless://"+xrayTestUUID+"@example.org:443?encryption="+value+reality+"#n").Encryption; encryption != want {
+			t.Errorf("encryption %s: %q, want %q", value, encryption, want)
+		}
+	}
+}
+
+// XHTTP as v2rayA writes the mode, an extra escaped twice, and a range with fractions.
+func TestLinkXHTTPForms(t *testing.T) {
+	base := "vless://" + xrayTestUUID + "@example.org:443?security=tls&sni=sni.example&type=xhttp&path=%2Fx"
+	if mode := parsedVLESS(t, base+"&mode=stream_one#n").Transport.XHTTPOptions.Mode; mode != "stream-one" {
+		t.Errorf("mode %q", mode)
+	}
+	for _, extra := range []string{
+		"%257B%2522xPaddingBytes%2522%253A%2522200-900%2522%257D",
+		"%7B%22xPaddingBytes%22%3A%22200.0-900.0%22%7D",
+		"%7B%22xPaddingBytes%22%3A%7B%22from%22%3A200%2C%22to%22%3A900%7D%7D",
+	} {
+		padding := parsedVLESS(t, base+"&extra="+extra+"#n").Transport.XHTTPOptions.XPaddingBytes
+		if padding.From != 200 || padding.To != 900 {
+			t.Errorf("extra %s: padding %v", extra, padding)
+		}
+	}
+	if _, err := ParseSubscriptionLink(base + "&extra=%7B%22xPaddingBytes%22%3A%22200.5-900%22%7D#n"); err == nil {
+		t.Error("a padding of 200.5 bytes was taken")
+	}
+}
+
+func TestLinkTLSOfOtherClients(t *testing.T) {
+	const list = "AEX+DQBBtwAgACBnq8/sMmD3yl6v6TOKr4WgJz6Kj0nSUa8tR7+Tdbm5HwAEAAEAAQASY2xvdWRmbGFyZS1lY2guY29tAAA="
+	base := "vless://" + xrayTestUUID + "@example.org:443?security=tls&sni=sni.example"
+	ech := parsedVLESS(t, base+"&ech="+list+"#n").TLS.ECH
+	if ech == nil || !ech.Enabled || len(ech.Config) != 4 || ech.Config[0] != "-----BEGIN ECH CONFIGS-----" {
+		t.Errorf("ECH from a list: %+v", ech)
+	}
+	ech = parsedVLESS(t, base+"&ech=cloudflare-ech.com%2Bhttps%3A%2F%2F1.1.1.1%2Fdns-query#n").TLS.ECH
+	if ech == nil || !ech.Enabled || len(ech.Config) != 0 || ech.QueryServerName != "cloudflare-ech.com" {
+		t.Errorf("ECH from DNS: %+v", ech)
+	}
+	const certificate = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+	tls := parsedVLESS(t, base+"&nosni=1&cert="+url.QueryEscape(certificate)+"#n").TLS
+	if !tls.DisableSNI || len(tls.Certificate) != 3 {
+		t.Errorf("TLS %+v", tls)
+	}
+	if tls = parsedVLESS(t, base+"&cert=%2Fetc%2Fssl%2Fcert.pem#n").TLS; len(tls.Certificate) != 0 || tls.CertificatePath != "" {
+		t.Errorf("a path in cert was taken: %+v", tls)
+	}
+}
+
+func TestLinkHysteria2PortsParameter(t *testing.T) {
+	outbound, err := ParseSubscriptionLink("hysteria2://secret@example.org:443?sni=sni.example&mport=1000-2000,3000#n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ports := outbound.Options.(*option.Hysteria2OutboundOptions).ServerPorts; len(ports) != 2 || ports[0] != "1000:2000" || ports[1] != "3000:3000" {
+		t.Fatalf("ports %v", ports)
+	}
+}
+
+// v2rayN writes the user of a socks:// link as base64 of "user:password".
+func TestLinkSOCKSUserInBase64(t *testing.T) {
+	for link, want := range map[string][2]string{
+		"socks://" + base64.StdEncoding.EncodeToString([]byte("user:pass")) + "@example.org:1080#n": {"user", "pass"},
+		"socks5://user:pass@example.org:1080#n":                                                     {"user", "pass"},
+		"socks://dXNlcg@example.org:1080#n":                                                         {"dXNlcg", ""},
+	} {
+		outbound, err := ParseSubscriptionLink(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		options := outbound.Options.(*option.SOCKSOutboundOptions)
+		if options.Username != want[0] || options.Password != want[1] {
+			t.Errorf("%s: %q %q", link, options.Username, options.Password)
+		}
+	}
+}

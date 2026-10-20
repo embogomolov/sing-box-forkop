@@ -13,7 +13,7 @@ import (
 )
 
 func parseAnyTLSLink(link string) (option.Outbound, error) {
-	linkURL, err := url.Parse(link)
+	linkURL, err := parseLinkURL(link)
 	if err != nil {
 		return option.Outbound{}, err
 	}
@@ -41,7 +41,7 @@ func parseAnyTLSLink(link string) (option.Outbound, error) {
 }
 
 func parseTuicLink(link string) (option.Outbound, error) {
-	linkURL, err := url.Parse(link)
+	linkURL, err := parseLinkURL(link)
 	if err != nil {
 		return option.Outbound{}, err
 	}
@@ -125,7 +125,7 @@ func parseHysteriaLink(link string) (option.Outbound, error) {
 
 func parseHysteria2Link(link string) (option.Outbound, error) {
 	link, ports := splitHopPorts(link)
-	linkURL, err := url.Parse(link)
+	linkURL, err := parseLinkURL(link)
 	if err != nil {
 		return option.Outbound{}, err
 	}
@@ -137,6 +137,10 @@ func parseHysteria2Link(link string) (option.Outbound, error) {
 	tls, err := linkTLS(q, server, true)
 	if err != nil {
 		return option.Outbound{}, err
+	}
+	if len(ports) == 0 {
+		// some clients write the port hopping list as a parameter
+		ports = subscription.PortRanges(q.get("mport"))
 	}
 	options := &option.Hysteria2OutboundOptions{
 		ServerOptions:               option.ServerOptions{Server: server, ServerPort: port},

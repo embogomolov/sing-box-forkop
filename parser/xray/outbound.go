@@ -123,7 +123,8 @@ func parseVLESS(source sourceOutbound) (*option.VLESSOutboundOptions, error) {
 	if server.Address == "" || server.Port == 0 || user.ID == "" {
 		return nil, E.New("invalid VLESS server")
 	}
-	if err := subscription.CheckVLESSFlow(user.Flow); err != nil {
+	flow, err := subscription.VLESSFlow(user.Flow)
+	if err != nil {
 		return nil, err
 	}
 	transport, err := parseTransport(source.StreamSettings)
@@ -137,7 +138,7 @@ func parseVLESS(source sourceOutbound) (*option.VLESSOutboundOptions, error) {
 	return &option.VLESSOutboundOptions{
 		ServerOptions:               option.ServerOptions{Server: server.Address, ServerPort: uint16(server.Port)},
 		UUID:                        user.ID,
-		Flow:                        user.Flow,
+		Flow:                        flow,
 		Encryption:                  subscription.VLESSEncryption(user.Encryption),
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: tls},
 		Transport:                   transport,

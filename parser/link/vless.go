@@ -1,8 +1,6 @@
 package link
 
 import (
-	"net/url"
-
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/parser/subscription"
@@ -10,7 +8,7 @@ import (
 )
 
 func parseVLESSLink(link string) (option.Outbound, error) {
-	linkURL, err := url.Parse(link)
+	linkURL, err := parseLinkURL(link)
 	if err != nil {
 		return option.Outbound{}, err
 	}
@@ -26,8 +24,8 @@ func parseVLESSLink(link string) (option.Outbound, error) {
 		return option.Outbound{}, err
 	}
 	q := linkQuery(linkURL)
-	flow := q.get("flow")
-	if err = subscription.CheckVLESSFlow(flow); err != nil {
+	flow, err := subscription.VLESSFlow(q.get("flow"))
+	if err != nil {
 		return option.Outbound{}, err
 	}
 	tls, err := linkTLS(q, server, false)
@@ -52,7 +50,13 @@ func parseVLESSLink(link string) (option.Outbound, error) {
 		Transport:                   transport,
 		DialerOptions:               option.DialerOptions{AbstractDialerOptions: option.AbstractDialerOptions{TCPFastOpen: q.flag("tfo", "tcp-fast-open", "tcp_fast_open")}},
 	}
-	if encoding := q.get("packetEncoding", "packet_encoding"); encoding != "" {
+	switch encoding := q.get("packetEncoding", "packet_encoding", "packet-encoding"); encoding {
+	case "", "none":
+	case "packet":
+		// the name NekoBox and mihomo give packetaddr
+		encoding = "packetaddr"
+		options.PacketEncoding = &encoding
+	default:
 		options.PacketEncoding = &encoding
 	}
 	return option.Outbound{

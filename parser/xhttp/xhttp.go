@@ -5,6 +5,7 @@ package xhttp
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 
 	C "github.com/sagernet/sing-box/constant"
@@ -20,24 +21,24 @@ type _Settings struct {
 	Mode    string            `json:"mode"`
 	Headers map[string]string `json:"headers"`
 
-	XPaddingBytes     *option.Range[int] `json:"xPaddingBytes"`
-	XPaddingObfsMode  subscription.Bool  `json:"xPaddingObfsMode"`
-	XPaddingKey       string             `json:"xPaddingKey"`
-	XPaddingHeader    string             `json:"xPaddingHeader"`
-	XPaddingPlacement string             `json:"xPaddingPlacement"`
-	XPaddingMethod    string             `json:"xPaddingMethod"`
+	XPaddingBytes     *subscription.Range `json:"xPaddingBytes"`
+	XPaddingObfsMode  subscription.Bool   `json:"xPaddingObfsMode"`
+	XPaddingKey       string              `json:"xPaddingKey"`
+	XPaddingHeader    string              `json:"xPaddingHeader"`
+	XPaddingPlacement string              `json:"xPaddingPlacement"`
+	XPaddingMethod    string              `json:"xPaddingMethod"`
 
-	UplinkHTTPMethod    string             `json:"uplinkHTTPMethod"`
-	UplinkDataPlacement string             `json:"uplinkDataPlacement"`
-	UplinkDataKey       string             `json:"uplinkDataKey"`
-	UplinkChunkSize     *option.Range[int] `json:"uplinkChunkSize"`
+	UplinkHTTPMethod    string              `json:"uplinkHTTPMethod"`
+	UplinkDataPlacement string              `json:"uplinkDataPlacement"`
+	UplinkDataKey       string              `json:"uplinkDataKey"`
+	UplinkChunkSize     *subscription.Range `json:"uplinkChunkSize"`
 
-	SessionIDPlacement string             `json:"sessionIDPlacement"`
-	SessionPlacement   string             `json:"sessionPlacement"`
-	SessionIDKey       string             `json:"sessionIDKey"`
-	SessionKey         string             `json:"sessionKey"`
-	SessionIDTable     string             `json:"sessionIDTable"`
-	SessionIDLength    *option.Range[int] `json:"sessionIDLength"`
+	SessionIDPlacement string              `json:"sessionIDPlacement"`
+	SessionPlacement   string              `json:"sessionPlacement"`
+	SessionIDKey       string              `json:"sessionIDKey"`
+	SessionKey         string              `json:"sessionKey"`
+	SessionIDTable     string              `json:"sessionIDTable"`
+	SessionIDLength    *subscription.Range `json:"sessionIDLength"`
 
 	SeqPlacement string `json:"seqPlacement"`
 	SeqKey       string `json:"seqKey"`
@@ -45,11 +46,11 @@ type _Settings struct {
 	NoGRPCHeader subscription.Bool `json:"noGRPCHeader"`
 	NoSSEHeader  subscription.Bool `json:"noSSEHeader"`
 
-	ScMaxEachPostBytes   *option.Range[int] `json:"scMaxEachPostBytes"`
-	ScMinPostsIntervalMs *option.Range[int] `json:"scMinPostsIntervalMs"`
-	ScStreamUpServerSecs *option.Range[int] `json:"scStreamUpServerSecs"`
-	ScMaxBufferedPosts   subscription.Int   `json:"scMaxBufferedPosts"`
-	ScMaxConcurrentPosts subscription.Int   `json:"scMaxConcurrentPosts"`
+	ScMaxEachPostBytes   *subscription.Range `json:"scMaxEachPostBytes"`
+	ScMinPostsIntervalMs *subscription.Range `json:"scMinPostsIntervalMs"`
+	ScStreamUpServerSecs *subscription.Range `json:"scStreamUpServerSecs"`
+	ScMaxBufferedPosts   subscription.Int    `json:"scMaxBufferedPosts"`
+	ScMaxConcurrentPosts subscription.Int    `json:"scMaxConcurrentPosts"`
 
 	ServerMaxHeaderBytes subscription.Int        `json:"serverMaxHeaderBytes"`
 	MaxHeaderBytes       subscription.Int        `json:"maxHeaderBytes"`
@@ -70,12 +71,12 @@ type Settings _Settings
 var DefaultPaddingBytes = option.Range[int]{From: 100, To: 1000}
 
 type XmuxSettings struct {
-	MaxConcurrency   *option.Range[int] `json:"maxConcurrency"`
-	MaxConnections   *option.Range[int] `json:"maxConnections"`
-	CMaxReuseTimes   *option.Range[int] `json:"cMaxReuseTimes"`
-	HMaxRequestTimes *option.Range[int] `json:"hMaxRequestTimes"`
-	HMaxReusableSecs *option.Range[int] `json:"hMaxReusableSecs"`
-	HKeepAlivePeriod subscription.Int   `json:"hKeepAlivePeriod"`
+	MaxConcurrency   *subscription.Range `json:"maxConcurrency"`
+	MaxConnections   *subscription.Range `json:"maxConnections"`
+	CMaxReuseTimes   *subscription.Range `json:"cMaxReuseTimes"`
+	HMaxRequestTimes *subscription.Range `json:"hMaxRequestTimes"`
+	HMaxReusableSecs *subscription.Range `json:"hMaxReusableSecs"`
+	HKeepAlivePeriod subscription.Int    `json:"hKeepAlivePeriod"`
 }
 
 // UnmarshalJSON applies Xray's rule for "extra": when present it replaces everything else except
@@ -112,6 +113,12 @@ func LinkSettings(host, path, mode, extra string) (Settings, error) {
 	if json.Unmarshal([]byte(content), &quoted) == nil {
 		content = strings.TrimSpace(quoted)
 	}
+	if strings.HasPrefix(content, "%") {
+		// escaped twice by some generators
+		if unescaped, err := url.QueryUnescape(content); err == nil {
+			content = strings.TrimSpace(unescaped)
+		}
+	}
 	if decoded, isEncoded := subscription.DecodeBase64(content); isEncoded {
 		content = decoded
 	}
@@ -143,15 +150,15 @@ func (s Settings) Build() (*option.V2RayTransportOptions, error) {
 		UplinkHTTPMethod:     s.UplinkHTTPMethod,
 		UplinkDataPlacement:  s.UplinkDataPlacement,
 		UplinkDataKey:        s.UplinkDataKey,
-		UplinkChunkSize:      s.UplinkChunkSize,
+		UplinkChunkSize:      (*option.Range[int])(s.UplinkChunkSize),
 		SessionIDTable:       s.SessionIDTable,
 		SeqPlacement:         s.SeqPlacement,
 		SeqKey:               s.SeqKey,
 		NoGRPCHeader:         s.NoGRPCHeader.Value(),
 		NoSSEHeader:          s.NoSSEHeader.Value(),
-		ScMaxEachPostBytes:   s.ScMaxEachPostBytes,
-		ScMinPostsIntervalMs: s.ScMinPostsIntervalMs,
-		ScStreamUpServerSecs: s.ScStreamUpServerSecs,
+		ScMaxEachPostBytes:   (*option.Range[int])(s.ScMaxEachPostBytes),
+		ScMinPostsIntervalMs: (*option.Range[int])(s.ScMinPostsIntervalMs),
+		ScStreamUpServerSecs: (*option.Range[int])(s.ScStreamUpServerSecs),
 		CongestionController: s.CongestionController,
 		TrustedXForwardedFor: badoption.Listable[string](s.TrustedXForwardedFor),
 	}
@@ -178,15 +185,15 @@ func (s Settings) Build() (*option.V2RayTransportOptions, error) {
 		return nil, err
 	}
 	if s.XPaddingBytes != nil {
-		base.XPaddingBytes = *s.XPaddingBytes
+		base.XPaddingBytes = option.Range[int](*s.XPaddingBytes)
 	}
 	if s.SessionIDLength != nil {
-		base.SessionIDLength = *s.SessionIDLength
+		base.SessionIDLength = option.Range[int](*s.SessionIDLength)
 	}
 	if s.Xmux != nil {
 		base.Xmux = &option.V2RayXHTTPXmuxOptions{HKeepAlivePeriod: int64(s.Xmux.HKeepAlivePeriod)}
 		for _, field := range []struct {
-			source *option.Range[int]
+			source *subscription.Range
 			target *option.Range[int]
 		}{
 			{s.Xmux.MaxConcurrency, &base.Xmux.MaxConcurrency},
@@ -196,11 +203,13 @@ func (s Settings) Build() (*option.V2RayTransportOptions, error) {
 			{s.Xmux.HMaxReusableSecs, &base.Xmux.HMaxReusableSecs},
 		} {
 			if field.source != nil {
-				*field.target = *field.source
+				*field.target = option.Range[int](*field.source)
 			}
 		}
 	}
-	normalized, err := Normalize(option.V2RayXHTTPOptions{Mode: s.Mode, V2RayXHTTPBaseOptions: base})
+	// v2rayA writes the modes with "_"
+	mode := strings.ReplaceAll(strings.ToLower(s.Mode), "_", "-")
+	normalized, err := Normalize(option.V2RayXHTTPOptions{Mode: mode, V2RayXHTTPBaseOptions: base})
 	if err != nil {
 		return nil, err
 	}

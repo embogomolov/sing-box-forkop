@@ -30,7 +30,8 @@ func (v *vlessOptions) Build() (any, error) {
 	if err := v.tlsOptions.check(); err != nil {
 		return nil, err
 	}
-	if err := subscription.CheckVLESSFlow(v.Flow); err != nil {
+	flow, err := subscription.VLESSFlow(v.Flow)
+	if err != nil {
 		return nil, err
 	}
 	transport, err := v.transportOptions.build()
@@ -51,7 +52,7 @@ func (v *vlessOptions) Build() (any, error) {
 		DialerOptions:               v.dialerOptions.build(),
 		ServerOptions:               v.serverOptions.build(),
 		UUID:                        string(v.UUID),
-		Flow:                        v.Flow,
+		Flow:                        flow,
 		Encryption:                  subscription.VLESSEncryption(v.Encryption),
 		Network:                     networks(v.UDP),
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: v.tlsOptions.build(v.Server, false)},
