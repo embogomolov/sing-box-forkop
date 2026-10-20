@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -308,5 +309,38 @@ func TestProviderWithoutUpdateIntervalDisablesScheduledUpdates(t *testing.T) {
 	case <-remote.ticker.C:
 		t.Fatal("stopped retry ticker still fired")
 	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+type externalRecordingDialer struct {
+	systemTestDialer
+	external bool
+}
+
+func (d *externalRecordingDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	d.external = interrupt.IsExternalConnectionFromContext(ctx)
+	return d.systemTestDialer.DialContext(ctx, network, destination)
+}
+
+// The download is dialed as an external connection, so that a group switching members does
+// not close it together with its own connections.
+func TestProviderDownloadIsExternalConnection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	dialer := new(externalRecordingDialer)
+	remote := &ProviderRemote{
+		ctx:       context.Background(),
+		logger:    log.NewNOPFactory().NewLogger("test"),
+		url:       server.URL,
+		userAgent: "sing-box",
+		dialer:    dialer,
+	}
+	if err := remote.Update(); err == nil {
+		t.Fatal("a failed download was reported as a success")
+	}
+	if !dialer.external {
+		t.Fatal("the subscription download was dialed as an internal connection")
 	}
 }
