@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/vless/encryption"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -286,6 +287,39 @@ func QUICSecurity(options *option.OutboundTLSOptions) *option.OutboundTLSOptions
 	options.UTLS = nil
 	options.Reality = nil
 	return options
+}
+
+// XHTTPOverQUIC leaves the TLS fingerprint out of an XHTTP leg that runs over HTTP/3: a
+// fingerprint is a Client Hello of TCP, the TLS client of sing-box refuses one over QUIC, and
+// XHTTP's QUIC handshake has a Chrome profile of its own.
+func XHTTPOverQUIC(outbound option.Outbound) {
+	var (
+		tls       *option.OutboundTLSOptions
+		transport *option.V2RayTransportOptions
+	)
+	switch options := outbound.Options.(type) {
+	case *option.VLESSOutboundOptions:
+		tls, transport = options.TLS, options.Transport
+	case *option.VMessOutboundOptions:
+		tls, transport = options.TLS, options.Transport
+	case *option.TrojanOutboundOptions:
+		tls, transport = options.TLS, options.Transport
+	}
+	if transport == nil || transport.Type != C.V2RayTransportTypeXHTTP {
+		return
+	}
+	for _, leg := range []*option.OutboundTLSOptions{tls, downloadTLS(transport.XHTTPOptions.Download)} {
+		if leg != nil && len(leg.ALPN) > 0 && leg.ALPN[0] == "h3" {
+			leg.UTLS = nil
+		}
+	}
+}
+
+func downloadTLS(download *option.V2RayXHTTPDownloadOptions) *option.OutboundTLSOptions {
+	if download == nil {
+		return nil
+	}
+	return download.TLS
 }
 
 // VLESSEncryption passes VLESS Encryption on as it is written; any other value, which Xray-core

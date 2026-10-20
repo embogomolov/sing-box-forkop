@@ -209,3 +209,18 @@ func TestLinkXHTTPDownloadLeg(t *testing.T) {
 		t.Error("a download leg in stream-one was taken")
 	}
 }
+
+// A fingerprint is a Client Hello of TCP: an XHTTP leg over HTTP/3 has none, or every dial fails.
+func TestLinkXHTTPOverHTTP3HasNoFingerprint(t *testing.T) {
+	extra := url.QueryEscape(`{"downloadSettings":{"address":"down.example","port":443,"security":"tls","tlsSettings":{"alpn":["h3"],"fingerprint":"chrome"}}}`)
+	options := parsedVLESS(t, "vless://"+xrayTestUUID+"@up.example:443?security=tls&sni=up.example&alpn=h3&fp=firefox&type=xhttp&path=%2Fx&mode=packet-up&extra="+extra+"#n")
+	if options.TLS.UTLS != nil {
+		t.Errorf("the HTTP/3 leg kept the fingerprint %+v", options.TLS.UTLS)
+	}
+	if download := options.Transport.XHTTPOptions.Download; download.TLS.UTLS != nil {
+		t.Errorf("the HTTP/3 download leg kept the fingerprint %+v", download.TLS.UTLS)
+	}
+	if tls := parsedVLESS(t, "vless://"+xrayTestUUID+"@up.example:443?security=tls&alpn=h2&type=xhttp&path=%2Fx#n").TLS; tls.UTLS == nil {
+		t.Error("an HTTP/2 leg lost its fingerprint")
+	}
+}

@@ -59,6 +59,7 @@ func NewCollector(format string) *Collector {
 
 // Add keeps a server the parser could represent.
 func (c *Collector) Add(outbound option.Outbound) {
+	XHTTPOverQUIC(outbound)
 	c.outbounds = append(c.outbounds, outbound)
 }
 

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/parser/subscription"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -11,6 +12,14 @@ import (
 // speak is reported rather than guessed at, so the caller leaves that one link
 // out and keeps the rest of the subscription.
 func ParseSubscriptionLink(link string) (option.Outbound, error) {
+	outbound, err := parseSubscriptionLink(link)
+	if err == nil {
+		subscription.XHTTPOverQUIC(outbound)
+	}
+	return outbound, err
+}
+
+func parseSubscriptionLink(link string) (option.Outbound, error) {
 	scheme, _, found := strings.Cut(link, "://")
 	if !found {
 		return option.Outbound{}, E.New("not a share link")
