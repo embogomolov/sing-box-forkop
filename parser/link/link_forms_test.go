@@ -140,3 +140,34 @@ func TestLinkSOCKSUserInBase64(t *testing.T) {
 		}
 	}
 }
+
+// A node that could not connect is refused with the reason, not imported dead.
+func TestLinkRefusesNodesThatCannotConnect(t *testing.T) {
+	const shadowsocks = "ss://YWVzLTI1Ni1nY206cGFzcw@example.org:443"
+	vless := "vless://" + xrayTestUUID + "@example.org:443?flow=xtls-rprx-vision"
+	for _, link := range []string{
+		"hysteria://example.org:443?protocol=faketcp&auth=secret#n",
+		"hysteria://example.org:443?protocol=wechat-video&auth=secret#n",
+		"hysteria://example.org:443?auth=secret&ca=%2Fetc%2Fssl%2Fca.pem#n",
+		shadowsocks + "?type=ws&path=%2Fws#n",
+		shadowsocks + "?security=tls&sni=sni.example#n",
+		vless + "&security=tls&type=ws&path=%2Fws#n",
+		vless + "&security=tls&type=grpc&serviceName=s#n",
+		vless + "#n",
+	} {
+		if _, err := ParseSubscriptionLink(link); err == nil {
+			t.Errorf("%s was taken", link)
+		}
+	}
+	for _, link := range []string{
+		"hysteria://example.org:443?protocol=udp&auth=secret#n",
+		shadowsocks + "?plugin=obfs-local%3Bobfs%3Dhttp#n",
+		vless + "&security=tls&sni=sni.example#n",
+		vless + "&security=reality&sni=www.example.com&pbk=SSw7I859PPdN4DQ7fxV9fobXM61Ms3mqZRlIY1aJvHQ#n",
+		vless + "&type=ws&path=%2Fws&encryption=mlkem768x25519plus.native.0rtt.SSw7I859PPdN4DQ7fxV9fobXM61Ms3mqZRlIY1aJvHQ#n",
+	} {
+		if _, err := ParseSubscriptionLink(link); err != nil {
+			t.Errorf("%s: %v", link, err)
+		}
+	}
+}

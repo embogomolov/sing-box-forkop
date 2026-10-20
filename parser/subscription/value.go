@@ -231,6 +231,21 @@ func VLESSFlow(flow string) (string, error) {
 	return "", E.New("unsupported VLESS flow: ", flow)
 }
 
+// CheckVLESSVision refuses Vision where it cannot work: it needs the TLS of a raw TCP connection
+// itself, unless VLESS Encryption carries it, as in Xray-core.
+func CheckVLESSVision(flow string, encryption string, tls *option.OutboundTLSOptions, transport *option.V2RayTransportOptions) error {
+	if flow == "" || encryption != "" {
+		return nil
+	}
+	if transport != nil && transport.Type != "" {
+		return E.New("flow ", flow, " does not work over the ", transport.Type, " transport")
+	}
+	if tls == nil || !tls.Enabled {
+		return E.New("flow ", flow, " does not work without TLS")
+	}
+	return nil
+}
+
 // String is a text field a generator may have written as a number or a boolean, as Clash reads its
 // configuration weakly typed.
 type String string

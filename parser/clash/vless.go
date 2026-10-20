@@ -62,5 +62,8 @@ func (v *vlessOptions) Build() (any, error) {
 	if packetEncoding != "" {
 		options.PacketEncoding = &packetEncoding
 	}
+	if err = subscription.CheckVLESSVision(options.Flow, options.Encryption, options.TLS, options.Transport); err != nil {
+		return nil, err
+	}
 	return options, nil
 }

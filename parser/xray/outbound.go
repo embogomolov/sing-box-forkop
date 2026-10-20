@@ -135,11 +135,15 @@ func parseVLESS(source sourceOutbound) (*option.VLESSOutboundOptions, error) {
 	if err != nil {
 		return nil, err
 	}
+	encryption := subscription.VLESSEncryption(user.Encryption)
+	if err = subscription.CheckVLESSVision(flow, encryption, tls, transport); err != nil {
+		return nil, err
+	}
 	return &option.VLESSOutboundOptions{
 		ServerOptions:               option.ServerOptions{Server: server.Address, ServerPort: uint16(server.Port)},
 		UUID:                        user.ID,
 		Flow:                        flow,
-		Encryption:                  subscription.VLESSEncryption(user.Encryption),
+		Encryption:                  encryption,
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: tls},
 		Transport:                   transport,
 	}, nil

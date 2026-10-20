@@ -36,6 +36,10 @@ func parseVLESSLink(link string) (option.Outbound, error) {
 	if err != nil {
 		return option.Outbound{}, err
 	}
+	encryption := subscription.VLESSEncryption(q.get("encryption"))
+	if err = subscription.CheckVLESSVision(flow, encryption, tls, transport); err != nil {
+		return option.Outbound{}, err
+	}
 	if tls != nil && len(tls.ALPN) == 0 && transport != nil && transport.Type == C.V2RayTransportTypeXHTTP {
 		// XHTTP runs over HTTP; a client offering no protocol gets what the CDN in front prefers, rarely
 		// what the server listens for, so links offer both.
@@ -45,7 +49,7 @@ func parseVLESSLink(link string) (option.Outbound, error) {
 		ServerOptions:               option.ServerOptions{Server: server, ServerPort: port},
 		UUID:                        linkURL.User.Username(),
 		Flow:                        flow,
-		Encryption:                  subscription.VLESSEncryption(q.get("encryption")),
+		Encryption:                  encryption,
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: tls},
 		Transport:                   transport,
 		DialerOptions:               option.DialerOptions{AbstractDialerOptions: option.AbstractDialerOptions{TCPFastOpen: q.flag("tfo", "tcp-fast-open", "tcp_fast_open")}},

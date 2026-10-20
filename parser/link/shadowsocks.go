@@ -22,6 +22,16 @@ func parseShadowsocksLink(link string) (option.Outbound, error) {
 	if err != nil {
 		return option.Outbound{}, err
 	}
+	switch strings.ToLower(q.get("type", "net")) {
+	case "", "tcp", "raw", "none":
+	default:
+		return option.Outbound{}, E.New("unsupported transport of Xray for Shadowsocks: ", q.get("type", "net"))
+	}
+	switch strings.ToLower(q.get("security")) {
+	case "", "none":
+	default:
+		return option.Outbound{}, E.New("unsupported security of Xray for Shadowsocks: ", q.get("security"))
+	}
 	password, _ := linkURL.User.Password()
 	options := &option.ShadowsocksOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: server, ServerPort: port},

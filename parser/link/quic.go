@@ -108,7 +108,15 @@ func parseHysteriaLink(link string) (option.Outbound, error) {
 	if certificate := q.get("ca_str", "ca-str"); certificate != "" {
 		tls.Certificate = badoption.Listable[string]{certificate}
 	}
-	tls.CertificatePath = q.get("ca")
+	if q.get("ca") != "" {
+		return option.Outbound{}, E.New("unsupported option: ca names a file of this router")
+	}
+	switch protocol := strings.ToLower(q.get("protocol")); protocol {
+	case "", "udp":
+	default:
+		// faketcp and wechat-video are transports of the Hysteria client sing-box does not have
+		return option.Outbound{}, E.New("unsupported Hysteria protocol: ", protocol)
+	}
 	options := &option.HysteriaOutboundOptions{
 		ServerOptions:               option.ServerOptions{Server: server, ServerPort: port},
 		AuthString:                  q.get("auth", "auth_str", "auth-str"),

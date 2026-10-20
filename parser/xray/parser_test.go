@@ -170,6 +170,9 @@ func TestXrayRefusesWhatItCannotRepresent(t *testing.T) {
 			"streamSettings": {"network": "tcp", "tcpSettings": {"header": {"type": "http"}}}}`,
 		"an unsupported flow": `{"protocol": "vless", "tag": "flow",
 			"settings": {"vnext": [{"address": "a.example.test", "port": 443, "users": [{"id": "uuid", "flow": "xtls-rprx-direct"}]}]}}`,
+		"Vision over WebSocket": `{"protocol": "vless", "tag": "vision-ws",
+			"settings": {"vnext": [{"address": "a.example.test", "port": 443, "users": [{"id": "uuid", "flow": "xtls-rprx-vision"}]}]},
+			"streamSettings": {"network": "ws", "security": "tls"}}`,
 		"two servers in one outbound": `{"protocol": "vless", "tag": "pair",
 			"settings": {"vnext": [{"address": "a.example.test", "port": 443, "users": [{"id": "uuid"}]}, {"address": "b.example.test", "port": 443, "users": [{"id": "uuid"}]}]}}`,
 	} {
