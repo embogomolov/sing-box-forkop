@@ -2,13 +2,11 @@ package group
 
 import (
 	"context"
-	"errors"
 	"net"
 	"regexp"
 	"slices"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -29,8 +27,6 @@ import (
 
 const (
 	defaultFallbackAttemptTimeout       = 5 * time.Second
-	defaultFallbackFailureWindow        = 5 * time.Second
-	defaultFallbackMaxFailedAttempts    = 5
 	defaultFallbackStartupRetryInterval = 5 * time.Second
 	defaultFallbackStartupRetryCount    = 12
 )
@@ -64,11 +60,10 @@ type fallbackCandidate struct {
 }
 
 type fallbackHealth struct {
-	outbound       adapter.Outbound
-	checked        bool
-	alive          bool
-	failureCount   int
-	failureStarted time.Time
+	outbound adapter.Outbound
+	checked  bool
+	alive    bool
+	failures dialFailures
 }
 
 type fallbackCheckResult struct {
@@ -694,20 +689,8 @@ func (s *Fallback) recordDialSuccess(candidate fallbackCandidate) {
 	if !loaded || state.outbound != candidate.outbound {
 		return
 	}
-	state.failureCount = 0
-	state.failureStarted = time.Time{}
+	state.failures = dialFailures{}
 	s.health[candidate.tag] = state
-}
-
-// countableDialFailure mirrors Mihomo onDialFailed: failures of members that
-// cannot be down, and failures caused by an unsupported request rather than by
-// the member itself, must not push the group towards an early health check.
-func countableDialFailure(detour adapter.Outbound, err error) bool {
-	switch detour.Type() {
-	case C.TypeDirect, C.TypeBlock, C.TypeDNS:
-		return false
-	}
-	return !errors.Is(err, N.ErrUnknownNetwork)
 }
 
 func (s *Fallback) recordDialFailure(candidate fallbackCandidate, err error) {
@@ -720,20 +703,7 @@ func (s *Fallback) recordDialFailure(candidate fallbackCandidate, err error) {
 		s.access.Unlock()
 		return
 	}
-	// The window is deliberately independent of the health check timeout: it
-	// only describes how tightly failures must arrive to count as one burst.
-	now := time.Now()
-	if state.failureCount == 0 || now.Sub(state.failureStarted) > defaultFallbackFailureWindow {
-		state.failureCount = 1
-		state.failureStarted = now
-	} else {
-		state.failureCount++
-	}
-	check := errors.Is(err, syscall.ECONNREFUSED) || state.failureCount >= defaultFallbackMaxFailedAttempts
-	if check {
-		state.failureCount = 0
-		state.failureStarted = time.Time{}
-	}
+	check := state.failures.add(time.Now(), err)
 	s.health[candidate.tag] = state
 	s.access.Unlock()
 	if check {
@@ -873,8 +843,7 @@ func (s *Fallback) checkCandidates(ctx context.Context, candidates []fallbackCan
 		}
 		state.checked = true
 		state.alive = result.err == nil
-		state.failureCount = 0
-		state.failureStarted = time.Time{}
+		state.failures = dialFailures{}
 		s.health[result.candidate.tag] = state
 		if result.err == nil {
 			resultMap[result.candidate.tag] = result.delay

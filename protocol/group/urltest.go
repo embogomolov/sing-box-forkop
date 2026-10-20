@@ -6,6 +6,7 @@ import (
 	"net"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -257,10 +258,12 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	}
 	conn, err := outbound.DialContext(ctx, network, destination)
 	if err == nil {
+		s.group.dialSucceeded()
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
 	s.group.deleteHistory(outbound.Tag())
+	s.group.dialFailed(ctx, outbound, err)
 	return nil, err
 }
 
@@ -277,10 +280,12 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 	}
 	conn, err := outbound.ListenPacket(ctx, destination)
 	if err == nil {
+		s.group.dialSucceeded()
 		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
 	s.group.deleteHistory(outbound.Tag())
+	s.group.dialFailed(ctx, outbound, err)
 	return nil, err
 }
 
@@ -390,6 +395,9 @@ type URLTestGroup struct {
 	close                        chan struct{}
 	started                      bool
 	lastActive                   common.TypedValue[time.Time]
+	failureAccess                sync.Mutex
+	failures                     dialFailures
+	failureCheck                 atomic.Bool
 }
 
 func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link string, expectedStatus urltest.ExpectedStatus, interval time.Duration, tolerance uint16, idleTimeout time.Duration, interruptExternalConnections bool) (*URLTestGroup, error) {
@@ -445,6 +453,30 @@ func (g *URLTestGroup) deleteHistory(tag string) {
 func (g *URLTestGroup) storeHistory(tag string, history *adapter.URLTestHistory) {
 	g.history.StoreURLTestHistory(tag, history)
 	g.sharedHistory.StoreURLTestHistory(tag, history)
+}
+
+func (g *URLTestGroup) dialSucceeded() {
+	g.failureAccess.Lock()
+	g.failures = dialFailures{}
+	g.failureAccess.Unlock()
+}
+
+// dialFailed checks the members at once when failed dials call for it, instead of leaving the
+// group on a dead member until the next periodic check; one such check runs at a time.
+func (g *URLTestGroup) dialFailed(ctx context.Context, detour adapter.Outbound, err error) {
+	if ctx.Err() != nil || !countableDialFailure(detour, err) {
+		return
+	}
+	g.failureAccess.Lock()
+	check := g.failures.add(time.Now(), err)
+	g.failureAccess.Unlock()
+	if !check || !g.failureCheck.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer g.failureCheck.Store(false)
+		g.CheckOutbounds(g.ctx, true)
+	}()
 }
 
 func (g *URLTestGroup) PostStart() {

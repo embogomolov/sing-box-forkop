@@ -2,7 +2,11 @@ package group
 
 import (
 	"context"
+	"errors"
+	"net"
+	"os"
 	"regexp"
+	"syscall"
 	"testing"
 	"time"
 
@@ -11,6 +15,7 @@ import (
 	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
+	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 )
@@ -231,5 +236,136 @@ func TestURLTestGroupKeepsHistoryOfMembersItCouldNotReach(t *testing.T) {
 
 	if history := sharedHistory.LoadURLTestHistory(node.Tag()); history == nil || history.Delay != 42 {
 		t.Fatalf("a check that ran out of time forgot a member it never finished testing: %v", history)
+	}
+}
+
+type urlTestRefusingOutbound struct {
+	outboundAdapter.Adapter
+}
+
+func (o *urlTestRefusingOutbound) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
+	return nil, &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}
+}
+
+func (o *urlTestRefusingOutbound) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
+	return nil, errors.New("not used")
+}
+
+// newDialTestURLTest selects the first member, which the URL tests found the fastest.
+func newDialTestURLTest(t *testing.T, outbounds ...adapter.Outbound) *URLTest {
+	t.Helper()
+	manager := &testOutboundManager{outbounds: map[string]adapter.Outbound{}}
+	for _, detour := range outbounds {
+		manager.outbounds[detour.Tag()] = detour
+	}
+	logger := log.NewNOPFactory().NewLogger("test")
+	group, err := NewURLTestGroup(context.Background(), manager, logger, outbounds, "http://health.test/generate_204", nil, time.Hour, 0, time.Hour, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, detour := range outbounds {
+		group.storeHistory(detour.Tag(), &adapter.URLTestHistory{Time: time.Now(), Delay: uint16(100 * (index + 1))})
+	}
+	group.performUpdateCheck()
+	if selected, _ := group.Select(N.NetworkTCP); selected != outbounds[0] {
+		t.Fatalf("unexpected initial selection: %v", selected.Tag())
+	}
+	return &URLTest{
+		Adapter:  outboundAdapter.NewAdapter(C.TypeURLTest, "urltest", []string{"tcp", "udp"}, nil),
+		ctx:      context.Background(),
+		outbound: manager,
+		logger:   logger,
+		group:    group,
+	}
+}
+
+func waitForURLTestSelection(t *testing.T, urlTest *URLTest, want adapter.Outbound) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		urlTest.group.access.RLock()
+		selected := urlTest.group.selectedOutboundTCP
+		urlTest.group.access.RUnlock()
+		if selected == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the group stayed on %s", selected.Tag())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A selected member whose dials fail is checked at the fifth failure, as Mihomo does, instead
+// of failing every connection until the next periodic test.
+func TestURLTestChecksAMemberWhoseDialsFail(t *testing.T) {
+	first := newFallbackHealthTestOutbound("first", true)
+	second := newFallbackHealthTestOutbound("second", true)
+	urlTest := newDialTestURLTest(t, first, second)
+	first.setAvailable(false)
+	for attempt := 0; attempt < maxDialFailures; attempt++ {
+		if attempt == maxDialFailures-1 && second.dialCount != 0 {
+			t.Fatalf("the group checked its members before the fifth failure")
+		}
+		if _, err := urlTest.DialContext(context.Background(), N.NetworkTCP, M.Socksaddr{}); err == nil {
+			t.Fatal("a dial through an unavailable member succeeded")
+		}
+	}
+	waitForURLTestSelection(t, urlTest, second)
+}
+
+func TestURLTestChecksAMemberThatRefusedAConnection(t *testing.T) {
+	first := &urlTestRefusingOutbound{Adapter: outboundAdapter.NewAdapter(C.TypeVLESS, "first", []string{"tcp"}, nil)}
+	second := newFallbackHealthTestOutbound("second", true)
+	urlTest := newDialTestURLTest(t, first, second)
+	if _, err := urlTest.DialContext(context.Background(), N.NetworkTCP, M.Socksaddr{}); err == nil {
+		t.Fatal("a refused dial succeeded")
+	}
+	waitForURLTestSelection(t, urlTest, second)
+}
+
+// A direct member cannot be down, and a dial the caller gave up says nothing of the member.
+func TestURLTestCountsOnlyFailuresOfTheMember(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, test := range []struct {
+		detour adapter.Outbound
+		ctx    context.Context
+	}{
+		{&fallbackHealthTestOutbound{Adapter: outboundAdapter.NewAdapter(C.TypeDirect, "direct", []string{"tcp", "udp"}, nil)}, context.Background()},
+		{&fallbackBlockingOutbound{Adapter: outboundAdapter.NewAdapter(C.TypeVLESS, "blocking", []string{"tcp"}, nil), started: make(chan struct{})}, canceled},
+	} {
+		urlTest := newDialTestURLTest(t, test.detour, newFallbackHealthTestOutbound("second", true))
+		for attempt := 0; attempt < maxDialFailures-1; attempt++ {
+			if _, err := urlTest.DialContext(test.ctx, N.NetworkTCP, M.Socksaddr{}); err == nil {
+				t.Fatalf("%s: a dial succeeded", test.detour.Tag())
+			}
+		}
+		if count := urlTest.group.failures.count; count != 0 {
+			t.Errorf("%s: %d failures counted", test.detour.Tag(), count)
+		}
+	}
+}
+
+func TestURLTestStartsTheCountAgainAfterADial(t *testing.T) {
+	first := newFallbackHealthTestOutbound("first", false)
+	second := newFallbackHealthTestOutbound("second", true)
+	urlTest := newDialTestURLTest(t, first, second)
+	fail := func() {
+		for attempt := 0; attempt < maxDialFailures-1; attempt++ {
+			_, _ = urlTest.DialContext(context.Background(), N.NetworkTCP, M.Socksaddr{})
+		}
+	}
+	fail()
+	first.setAvailable(true)
+	conn, err := urlTest.DialContext(context.Background(), N.NetworkTCP, M.Socksaddr{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+	first.setAvailable(false)
+	fail()
+	if count := urlTest.group.failures.count; count != maxDialFailures-1 || second.dialCount != 0 {
+		t.Fatalf("a dial that went through did not start the count again: %d failures, %d checks", count, second.dialCount)
 	}
 }

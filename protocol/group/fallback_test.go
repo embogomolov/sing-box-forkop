@@ -529,8 +529,8 @@ func TestFallbackIgnoresFailuresThatDoNotProveAMemberIsDown(t *testing.T) {
 			t.Fatal("expected the failing member to report an error")
 		}
 	}
-	if state := fallback.health[direct.Tag()]; state.failureCount != 0 {
-		t.Fatalf("direct failures were counted: %d", state.failureCount)
+	if state := fallback.health[direct.Tag()]; state.failures.count != 0 {
+		t.Fatalf("direct failures were counted: %d", state.failures.count)
 	}
 	select {
 	case <-fallback.wake:
@@ -584,7 +584,7 @@ func TestFallbackDialFailuresUseMihomoThreshold(t *testing.T) {
 		fallbackCandidate{tag: primary.Tag(), outbound: primary},
 		fallbackCandidate{tag: secondary.Tag(), outbound: secondary},
 	)
-	for attempt := 0; attempt < defaultFallbackMaxFailedAttempts-1; attempt++ {
+	for attempt := 0; attempt < maxDialFailures-1; attempt++ {
 		conn, err := fallback.DialContext(context.Background(), "tcp", M.Socksaddr{})
 		if err != nil {
 			t.Fatal(err)
@@ -592,8 +592,8 @@ func TestFallbackDialFailuresUseMihomoThreshold(t *testing.T) {
 		_ = conn.Close()
 	}
 	state := fallback.health[primary.Tag()]
-	if state.checked || state.failureCount != defaultFallbackMaxFailedAttempts-1 || fallback.Now() != primary.Tag() {
-		t.Fatalf("ordinary failures changed global state too early: checked=%v failures=%d now=%q", state.checked, state.failureCount, fallback.Now())
+	if state.checked || state.failures.count != maxDialFailures-1 || fallback.Now() != primary.Tag() {
+		t.Fatalf("ordinary failures changed global state too early: checked=%v failures=%d now=%q", state.checked, state.failures.count, fallback.Now())
 	}
 	select {
 	case <-fallback.wake:
@@ -937,7 +937,7 @@ func TestFallbackFailureWindowIgnoresHealthCheckTimeout(t *testing.T) {
 		fallbackCandidate{tag: secondary.Tag(), outbound: secondary},
 	)
 	fallback.timeout = time.Nanosecond
-	for attempt := 0; attempt < defaultFallbackMaxFailedAttempts; attempt++ {
+	for attempt := 0; attempt < maxDialFailures; attempt++ {
 		conn, err := fallback.DialContext(context.Background(), "tcp", M.Socksaddr{})
 		if err != nil {
 			t.Fatal(err)
