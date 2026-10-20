@@ -251,3 +251,14 @@ service/powerreport/sysstats_darwin_stub.go
 service/powerreport/sysstats_stub.go
 service/powerreport/sysstats_windows.go
 service/powerreport/zsyscall_windows.go
+
+# third_party/wireguard-go: the module's own tooling, the version file of its
+# command and the packages only Windows builds.
+third_party/wireguard-go/.gitignore
+third_party/wireguard-go/Makefile
+third_party/wireguard-go/reformat.sh
+third_party/wireguard-go/remove-unused.sh
+third_party/wireguard-go/rename-module.sh
+third_party/wireguard-go/version.go
+third_party/wireguard-go/conn/winrio
+third_party/wireguard-go/ipc/namedpipe
