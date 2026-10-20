@@ -11,4 +11,6 @@ git rm -r -q -f --ignore-unmatch -- "${paths[@]}"
 for path in "${paths[@]}"; do
     rm -rf -- $path
 done
-go mod tidy
+# tidy resolves the imports of every system and tag, and third_party lacks the packages
+# no stock build links: -e lets it finish past them.
+go mod tidy -e
