@@ -28,10 +28,37 @@ func proxyRouter(server *Server, router adapter.Router) http.Handler {
 	r.Route("/{name}", func(r chi.Router) {
 		r.Use(parseProxyName, findProxyByName(server))
 		r.Get("/", getProxy(server))
+		r.Get("/link", getProxyLink(server))
 		r.Get("/delay", getProxyDelay(server))
 		r.Put("/", updateProxy)
 	})
 	return r
+}
+
+func getProxyLink(server *Server) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		tag := r.Context().Value(CtxKeyProxyName).(string)
+		for _, provider := range server.provider.Providers() {
+			source, loaded := provider.(adapter.ProviderOutboundLink)
+			if !loaded {
+				continue
+			}
+			link, loaded, err := source.OutboundLink(tag)
+			if !loaded {
+				continue
+			}
+			if err != nil {
+				render.Status(r, http.StatusUnprocessableEntity)
+				render.JSON(w, r, newError("Outbound link unavailable: "+err.Error()))
+				return
+			}
+			render.JSON(w, r, render.M{"url": link})
+			return
+		}
+		render.Status(r, http.StatusNotFound)
+		render.JSON(w, r, ErrNotFound)
+	}
 }
 
 func parseProxyName(next http.Handler) http.Handler {
@@ -79,6 +106,10 @@ func proxyInfo(server *Server, detour adapter.Outbound) *badjson.JSONObject {
 	if group, isGroup := detour.(adapter.OutboundGroup); isGroup {
 		info.Put("now", group.Now())
 		info.Put("all", group.All())
+	}
+	if fallback, isFallback := detour.(*group.Fallback); isFallback {
+		info.Put("groups", fallback.Groups())
+		info.Put("fixed", fallback.Fixed())
 	}
 	return &info
 }
@@ -168,14 +199,14 @@ func updateProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy := r.Context().Value(CtxKeyProxy).(adapter.Outbound)
-	selector, ok := proxy.(*group.Selector)
+	selectable, ok := proxy.(adapter.SelectableOutboundGroup)
 	if !ok {
 		render.Status(r, http.StatusBadRequest)
 		render.JSON(w, r, newError("Must be a Selector"))
 		return
 	}
 
-	if !selector.SelectOutbound(req.Name) {
+	if !selectable.SelectOutbound(req.Name) {
 		render.Status(r, http.StatusBadRequest)
 		render.JSON(w, r, newError("Selector update error: not found"))
 		return
@@ -215,7 +246,9 @@ func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request) 
 		if strings.HasPrefix(url, "http://") {
 			url = ""
 		}
-		timeout, err := strconv.ParseInt(query.Get("timeout"), 10, 16)
+		// 32 bits as the group endpoint reads it; upstream's 16 refuse any
+		// timeout over 32767 ms.
+		timeout, err := strconv.ParseInt(query.Get("timeout"), 10, 32)
 		if err != nil {
 			render.Status(r, http.StatusBadRequest)
 			render.JSON(w, r, ErrBadRequest)

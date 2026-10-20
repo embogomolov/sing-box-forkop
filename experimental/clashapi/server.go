@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -53,6 +54,9 @@ type Server struct {
 	clashMode      *clashmode.Manager
 	logDebug       bool
 
+	// When a group sweep last tested each outbound, whether or not it answered.
+	groupDelayAccess         sync.Mutex
+	groupDelayAttempts       map[string]time.Time
 	externalController       bool
 	externalUI               string
 	externalUIDownloadURL    string
@@ -122,7 +126,7 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
 		r.Mount("/rules", ruleRouter(s.router))
 		r.Mount("/connections", connectionRouter(s.ctx, s.network, trafficManager))
 		r.Mount("/providers/proxies", proxyProviderRouter(s))
-		r.Mount("/providers/rules", ruleProviderRouter())
+		r.Mount("/providers/rules", ruleProviderRouter(s))
 		r.Mount("/script", scriptRouter())
 		r.Mount("/profile", profileRouter())
 		r.Mount("/cache", cacheRouter(ctx))
