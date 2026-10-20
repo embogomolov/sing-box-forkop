@@ -2,8 +2,9 @@
 # Checks what upstream merges and hand edits can silently break: no path of
 # release/forkop/prune.list is back, every row of third_party/README.md matches
 # go.mod (the version upstream requires and the replace into third_party), every
-# Go file and package outside third_party is built by a stock build, and every
-# package of a third_party module is linked by one or needed by its tests.
+# Go file and package outside third_party is built by a stock build, every
+# package of a third_party module is linked by one or needed by its tests, and
+# the linker still drops the methods no build calls.
 # Exits 1 with one line per problem.
 set -euo pipefail
 
@@ -125,5 +126,17 @@ for dir in third_party/*/; do
         problem "no stock build links $package and no kept package's tests need it: list third_party/$name${package#"$path"} in release/forkop/prune.list"
     done < <(LC_ALL=C comm -23 "$work/all.$name" "$work/needed.$name")
 done
+
+# A reachable function that looks a method up by an index or a computed name makes the
+# linker keep every exported method of every reachable type, megabytes no build runs.
+tags=$(bash build.sh --variant full --tags -with_naive_outbound --print-tags)
+if env GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags "$tags" -ldflags "-checklinkname=0 -dumpdep" \
+    -o /dev/null ./cmd/sing-box 2> "$work/dumpdep"; then
+    while read -r function; do
+        problem "the linker keeps every exported method: $function looks methods up through reflect (go build -ldflags=-dumpdep shows what reaches it)"
+    done < <(grep -o '[^ ]* <ReflectMethod>' "$work/dumpdep" | sed 's/ <ReflectMethod>$//' | LC_ALL=C sort -u)
+else
+    problem "go build -ldflags=-dumpdep failed, the method pruning check did not run"
+fi
 
 [ "$problems" -eq 0 ]
