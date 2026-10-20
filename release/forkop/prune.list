@@ -133,22 +133,11 @@ common/tls/reality_stub.go
 
 # Stubs for a build without a tag every build carries (REQUIRED_TAGS in
 # build.sh), and for a Go older than go.mod allows.
-cmd/sing-box/cmd_tools_fetch_http3_stub.go
 common/badtls/read_wait_stub.go
-common/httpclient/http3_transport_stub.go
 common/ktls/ktls_stub_nolinkname.go
 common/ktls/ktls_stub_oldgo.go
-common/networkquality/http3_stub.go
 common/tls/utls_stub.go
-common/urltest/keep_session_quic_stub.go
-constant/quic_stub.go
 include/clashapi_stub.go
-include/openvpn_stub.go
-include/quic_stub.go
-include/wireguard_stub.go
-transport/openconnect/device_stack_stub.go
-transport/openvpn/device_stack_stub.go
-transport/wireguard/device_stack_stub.go
 
 # Code for other systems: every build of this core runs on Linux. Windows,
 # macOS, iOS and tvOS, Android and the BSDs take their files, the packages only

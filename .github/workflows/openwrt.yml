@@ -62,6 +62,13 @@ jobs:
           go test -c -tags "$tags" -ldflags=-checklinkname=0 -o "$RUNNER_TEMP/netns.test" ./common/netns
           sudo "$RUNNER_TEMP/netns.test" -test.v
 
+      - name: Build with the required tags alone
+        run: |
+          set -euo pipefail
+          tags=$(./build.sh --print-required-tags)
+          go build -tags "$tags" -ldflags=-checklinkname=0 ./...
+          go test -tags "$tags" -ldflags=-checklinkname=0 ./include
+
   plan:
     runs-on: ubuntu-latest
     outputs:

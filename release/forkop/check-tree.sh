@@ -32,10 +32,10 @@ while IFS='|' read -r _ name module version _; do
     grep -q "^replace $module => ./third_party/$name\$" go.mod || problem "go.mod does not replace $module with ./third_party/$name"
 done < <(grep -E '^[|] [a-z][a-z0-9-]* [|] ' third_party/README.md)
 
-# A stock build is the base or the full variant on one of the targets, with
-# the pinned Go or a later one, so a file that switches on with a newer toolchain
-# stays. A file none of them compiles, or a package no binary links and no other
-# package's test imports, is code nobody ships or tests.
+# A stock build is a variant, or the least a custom build can be (the required tags
+# alone), on one of the targets, with the pinned Go or a later one, so a file that
+# switches on with a newer toolchain stays. A file none of them compiles, or a package
+# no binary links and no other package's test imports, is code nobody ships or tests.
 module=$(go list -m)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -54,8 +54,12 @@ list_pass() {
         ./... > "$out"
 }
 pids=()
-for variant in $(bash build.sh --print-variants); do
-    tags=$(bash build.sh --variant "$variant" --print-tags)
+for variant in $(bash build.sh --print-variants) required; do
+    if [ "$variant" = required ]; then
+        tags=$(bash build.sh --print-required-tags)
+    else
+        tags=$(bash build.sh --variant "$variant" --print-tags)
+    fi
     cgo=0
     [[ ",$tags," != *,with_naive_outbound,* ]] || cgo=1
     while read -r _ goenv; do

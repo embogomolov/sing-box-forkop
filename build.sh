@@ -12,17 +12,21 @@ CRONET_GO_PATH="${CRONET_GO_PATH:-$BUILD_CACHE/cronet-go}"
 TARGETS=(amd64 arm64 386 armv7 mipsle)
 VARIANTS=(base full)
 
-# The base variant, and every build: the code a build without one of these
-# would need is pruned (release/forkop/prune.list). Forkop runs its dashboard,
-# groups, latency tests and nft subnet sync through the Clash API; badlinkname and
-# tfogo_checklinkname0 let the linker accept the go:linkname references the
-# dependencies make.
-REQUIRED_TAGS=(
-  with_clash_api badlinkname tfogo_checklinkname0
-  with_gvisor with_quic with_wireguard with_utls with_openvpn with_trusttunnel
+# Every build: the code a build without one of these would need is pruned
+# (release/forkop/prune.list). Forkop runs its dashboard, groups, latency tests and nft
+# subnet sync through the Clash API and dials Reality and TLS fingerprints through uTLS;
+# badlinkname and tfogo_checklinkname0 let the linker accept the go:linkname references
+# the dependencies make.
+REQUIRED_TAGS=(with_clash_api with_utls badlinkname tfogo_checklinkname0)
+# What a build may leave out: Forkop reads the tags of the installed core and refuses
+# what it lacks. The full variant carries all of them.
+OPTIONAL_TAGS=(
+  with_gvisor with_quic with_wireguard with_openvpn with_trusttunnel
+  with_tailscale with_naive_outbound with_openconnect
 )
-# What the full variant adds, and the only tags a custom build chooses among.
-OPTIONAL_TAGS=(with_tailscale with_naive_outbound with_openconnect)
+BASE_TAGS=(with_gvisor with_quic with_wireguard with_openvpn with_trusttunnel)
+# Forkop runs these tunnels on gVisor's network stack.
+GVISOR_TAGS=(with_wireguard with_openvpn with_openconnect with_tailscale)
 
 usage() {
   cat <<'EOF'
@@ -35,9 +39,9 @@ Targets:
 
 Options:
   -v, --variant NAME     base (the default) or full
-  -t, --tags LIST        the optional tags of a custom build:
-                           with_openconnect,...   base with exactly these
-                           +with_openconnect,-with_tailscale   the variant changed
+  -t, --tags LIST        a custom build, the required tags always in it:
+                           with_quic,with_openvpn,...   exactly these optional tags
+                           +with_openconnect,-with_quic   the variant changed
   -a, --arch LIST        package only for these OpenWrt architectures, for
                          example aarch64_cortex-a53; the target follows from it
   -f, --format FORMAT    ipk, apk or all (the default)
@@ -46,6 +50,7 @@ Options:
       --binary-only      build the binary, skip the packages
   -l, --list             print the variants with their tags, and the targets
       --print-tags       print the tags the other options select, and exit
+      --print-required-tags  print the tags every build carries, and exit
       --print-targets    print the targets the other options select, and exit
       --print-go-env     print each selected target with its Go settings, and exit
       --print-variants   print the variant names, and exit
@@ -106,7 +111,7 @@ target_of_architecture() {
 variant_tags() {
   local -a tags
   case "$1" in
-    base) tags=() ;;
+    base) tags=("${BASE_TAGS[@]}") ;;
     full) tags=("${OPTIONAL_TAGS[@]}") ;;
     *) return 1 ;;
   esac
@@ -115,6 +120,12 @@ variant_tags() {
 
 sorted_list() {
   printf '%s\n' "$@" | sed '/^$/d' | LC_ALL=C sort -u | paste -sd, -
+}
+
+contains() {
+  local item="$1"
+  shift
+  printf '%s\n' "$@" | grep -qxF -- "$item"
 }
 
 # A required tag is in every build already; an optional one is added or removed.
@@ -139,11 +150,11 @@ resolve_tags() {
   for item in "${requested[@]}"; do
     [ -n "$item" ] || continue
     name="${item#[+-]}"
-    if printf '%s\n' "${REQUIRED_TAGS[@]}" | grep -qxF -- "$name"; then
+    if contains "$name" "${REQUIRED_TAGS[@]}"; then
       [ "${item:0:1}" != - ] || die "$name cannot be removed: every build carries it, and the code a build without it would need is pruned"
       continue
     fi
-    printf '%s\n' "${OPTIONAL_TAGS[@]}" | grep -qxF -- "$name" ||
+    contains "$name" "${OPTIONAL_TAGS[@]}" ||
       die "unknown tag '$name'. A build chooses among: ${OPTIONAL_TAGS[*]}"
     case "$item" in
       -*)
@@ -156,6 +167,13 @@ resolve_tags() {
       *) tags+=("$name") ;;
     esac
   done
+  if ! contains with_gvisor "${tags[@]}"; then
+    for tag in "${GVISOR_TAGS[@]}"; do
+      if contains "$tag" "${tags[@]}"; then
+        die "$tag needs with_gvisor: Forkop runs WireGuard, AmneziaWG, WARP, OpenVPN, OpenConnect and Tailscale on gVisor's network stack"
+      fi
+    done
+  fi
   sorted_list "${REQUIRED_TAGS[@]}" "${tags[@]}"
 }
 
@@ -174,6 +192,8 @@ list_variants() {
   for variant in "${VARIANTS[@]}"; do
     printf '%s\n  %s\n' "$variant" "$(variant_tags "$variant" | sed 's/,/ /g')"
   done
+  printf '\nrequired in every build\n  %s\n' "${REQUIRED_TAGS[*]}"
+  printf 'optional\n  %s\n  %s need with_gvisor\n' "${OPTIONAL_TAGS[*]}" "${GVISOR_TAGS[*]}"
   printf '\ntargets\n'
   for target in "${TARGETS[@]}"; do
     printf '  %-7s %s\n' "$target" "$(target_architectures "$target")"
@@ -326,6 +346,7 @@ while [ $# -gt 0 ]; do
     --binary-only) BINARY_ONLY=1; shift ;;
     -l|--list) list_variants; exit 0 ;;
     --print-tags) ACTION=print-tags; shift ;;
+    --print-required-tags) sorted_list "${REQUIRED_TAGS[@]}"; exit 0 ;;
     --print-targets) ACTION=print-targets; shift ;;
     --print-go-env) ACTION=print-go-env; shift ;;
     --print-variants) echo "${VARIANTS[*]}"; exit 0 ;;
