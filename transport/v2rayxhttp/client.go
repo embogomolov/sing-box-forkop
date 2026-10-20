@@ -336,7 +336,11 @@ func createHTTPClient(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, op
 		}
 		transport = &http2.Transport{
 			DialTLSContext: func(ctxInner context.Context, network string, addr string, cfg *gotls.Config) (net.Conn, error) {
-				return dialContext(ctxInner)
+				conn, err := dialContext(ctxInner)
+				if err != nil {
+					return nil, err
+				}
+				return &frameSizeCapConn{Conn: conn}, nil
 			},
 			IdleConnTimeout: net.ConnIdleTimeout,
 			ReadIdleTimeout: keepAlivePeriod,

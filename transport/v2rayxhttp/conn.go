@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/common/badh2"
+	"github.com/sagernet/sing-box/common/readwait"
 	"github.com/sagernet/sing-box/common/xray/signal/done"
+	N "github.com/sagernet/sing/common/network"
 )
 
 type splitConn struct {
@@ -18,6 +20,12 @@ type splitConn struct {
 	remoteAddr net.Addr
 	localAddr  net.Addr
 	onClose    func()
+
+	// what the read waiter's probe read, delivered before the next read
+	probe      []byte
+	pending    []byte
+	pendingErr error
+	flowing    bool
 }
 
 func (c *splitConn) Write(b []byte) (int, error) {
@@ -25,8 +33,42 @@ func (c *splitConn) Write(b []byte) (int, error) {
 }
 
 func (c *splitConn) Read(b []byte) (int, error) {
+	if len(c.pending) > 0 {
+		n := copy(b, c.pending)
+		c.pending = c.pending[n:]
+		return n, nil
+	}
+	if c.pendingErr != nil {
+		err := c.pendingErr
+		c.pendingErr = nil
+		return 0, badh2.HideStreamError(err)
+	}
 	n, err := c.reader.Read(b)
+	c.flowing = n == len(b)
 	return n, badh2.HideStreamError(err)
+}
+
+// probeSize is what an idle session holds while it waits for the other side.
+const probeSize = 512
+
+// CreateReadWaiter lets the copy loop wait for data without its buffer: a response body can't
+// be peeked, so the waiter reads a small probe and hands it over first.
+func (c *splitConn) CreateReadWaiter() (N.ReadWaiter, bool) {
+	return readwait.NewPeekWaiter(c, c.waitData), true
+}
+
+func (c *splitConn) waitData() error {
+	if len(c.pending) > 0 || c.pendingErr != nil || c.flowing {
+		return nil
+	}
+	if c.probe == nil {
+		c.probe = make([]byte, probeSize)
+	}
+	n, err := c.reader.Read(c.probe)
+	c.pending = c.probe[:n]
+	c.pendingErr = err
+	c.flowing = n == len(c.probe)
+	return nil
 }
 
 func (c *splitConn) Close() error {
