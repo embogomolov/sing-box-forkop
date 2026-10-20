@@ -49,6 +49,10 @@ func GenerateCertificate(parent *x509.Certificate, parentKey any, timeFunc func(
 		DNSNames: []string{serverName},
 	}
 	if parent == nil {
+		// A self-signed certificate is its own trust anchor: BoringSSL accepts it as its
+		// own issuer only with certificate signing, which RFC 5280 allows only to a CA.
+		template.IsCA = true
+		template.KeyUsage |= x509.KeyUsageCertSign
 		parent = template
 		parentKey = key
 	}
