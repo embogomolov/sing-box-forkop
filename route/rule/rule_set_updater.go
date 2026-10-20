@@ -18,7 +18,7 @@ func NewRuleSetUpdater(ctx context.Context, ruleSets []adapter.RuleSet) *RuleSet
 	var remoteRuleSets []*RemoteRuleSet
 	for _, ruleSet := range ruleSets {
 		remoteRuleSet, isRemote := ruleSet.(*RemoteRuleSet)
-		if isRemote {
+		if isRemote && remoteRuleSet.updateInterval > 0 {
 			remoteRuleSets = append(remoteRuleSets, remoteRuleSet)
 		}
 	}
@@ -45,7 +45,7 @@ func (u *RuleSetUpdater) Close() error {
 func (u *RuleSetUpdater) loopUpdate() {
 	nextUpdates := make([]time.Time, len(u.ruleSets))
 	for i, ruleSet := range u.ruleSets {
-		nextUpdates[i] = ruleSet.lastUpdated.Add(ruleSet.updateInterval)
+		nextUpdates[i] = ruleSet.updatedAt().Add(ruleSet.updateInterval)
 	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()

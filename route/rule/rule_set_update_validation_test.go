@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -54,7 +55,7 @@ func TestLocalRuleSetReloadRulesRejectsInvalidUpdateBeforeCommit(t *testing.T) {
 		DefaultOptions: option.DefaultHeadlessRule{
 			Domain: badoption.Listable[string]{"example.com"},
 		},
-	}})
+	}}, C.RuleSetFormatSource)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), callbackCount.Load())
 	require.False(t, ruleSet.metadata.ContainsDNSQueryTypeRule)
@@ -65,7 +66,7 @@ func TestLocalRuleSetReloadRulesRejectsInvalidUpdateBeforeCommit(t *testing.T) {
 		DefaultOptions: option.DefaultHeadlessRule{
 			QueryType: badoption.Listable[option.DNSQueryType]{option.DNSQueryType(1)},
 		},
-	}})
+	}}, C.RuleSetFormatSource)
 	require.ErrorContains(t, err, "dns conflict")
 	require.Equal(t, int32(1), callbackCount.Load())
 	require.False(t, ruleSet.metadata.ContainsDNSQueryTypeRule)
@@ -97,13 +98,13 @@ func TestRemoteRuleSetLoadBytesRejectsInvalidUpdateBeforeCommit(t *testing.T) {
 		callbackCount.Add(1)
 	})
 
-	err := ruleSet.loadBytes([]byte(`{"version":4,"rules":[{"domain":["example.com"]}]}`))
+	err := ruleSet.loadBytes([]byte(`{"version":4,"rules":[{"domain":["example.com"]}]}`), time.Now(), "")
 	require.NoError(t, err)
 	require.Equal(t, int32(1), callbackCount.Load())
 	require.False(t, ruleSet.metadata.ContainsDNSQueryTypeRule)
 	require.True(t, ruleSet.Match(&adapter.InboundContext{Domain: "example.com"}))
 
-	err = ruleSet.loadBytes([]byte(`{"version":4,"rules":[{"query_type":["A"]}]}`))
+	err = ruleSet.loadBytes([]byte(`{"version":4,"rules":[{"query_type":["A"]}]}`), time.Now(), "")
 	require.ErrorContains(t, err, "dns conflict")
 	require.Equal(t, int32(1), callbackCount.Load())
 	require.False(t, ruleSet.metadata.ContainsDNSQueryTypeRule)

@@ -28,16 +28,20 @@ func (g ruleGroupMatch) mergeWith(other ruleGroupMatch) ruleGroupMatch {
 }
 
 type ruleMatchSnapshot struct {
-	ipCidrMatchSource         bool
-	ipCidrAcceptEmpty         bool
-	deferredIPCIDRMatchGroups uint8
+	ipCidrMatchSource            bool
+	ipCidrAcceptEmpty            bool
+	deferredIPCIDRMatchGroups    uint8
+	ignoreDestinationIPCIDRMatch bool
+	ruleSetDomainOnly            bool
 }
 
 func snapshotRuleMatch(metadata *adapter.InboundContext) ruleMatchSnapshot {
 	return ruleMatchSnapshot{
-		ipCidrMatchSource:         metadata.IPCIDRMatchSource,
-		ipCidrAcceptEmpty:         metadata.IPCIDRAcceptEmpty,
-		deferredIPCIDRMatchGroups: metadata.DeferredIPCIDRMatchGroups,
+		ipCidrMatchSource:            metadata.IPCIDRMatchSource,
+		ipCidrAcceptEmpty:            metadata.IPCIDRAcceptEmpty,
+		deferredIPCIDRMatchGroups:    metadata.DeferredIPCIDRMatchGroups,
+		ignoreDestinationIPCIDRMatch: metadata.IgnoreDestinationIPCIDRMatch,
+		ruleSetDomainOnly:            metadata.RuleSetDomainOnly,
 	}
 }
 
@@ -45,4 +49,6 @@ func (s ruleMatchSnapshot) restore(metadata *adapter.InboundContext) {
 	metadata.IPCIDRMatchSource = s.ipCidrMatchSource
 	metadata.IPCIDRAcceptEmpty = s.ipCidrAcceptEmpty
 	metadata.DeferredIPCIDRMatchGroups = s.deferredIPCIDRMatchGroups
+	metadata.IgnoreDestinationIPCIDRMatch = s.ignoreDestinationIPCIDRMatch
+	metadata.RuleSetDomainOnly = s.ruleSetDomainOnly
 }

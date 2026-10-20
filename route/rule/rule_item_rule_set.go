@@ -17,14 +17,16 @@ type RuleSetItem struct {
 	setList           []adapter.RuleSet
 	ipCidrMatchSource bool
 	ipCidrAcceptEmpty bool
+	domainOnly        bool
 }
 
-func NewRuleSetItem(router adapter.Router, tagList []string, ipCIDRMatchSource bool, ipCidrAcceptEmpty bool) *RuleSetItem {
+func NewRuleSetItem(router adapter.Router, tagList []string, ipCIDRMatchSource bool, ipCidrAcceptEmpty bool, domainOnly bool) *RuleSetItem {
 	return &RuleSetItem{
 		router:            router,
 		tagList:           tagList,
 		ipCidrMatchSource: ipCIDRMatchSource,
 		ipCidrAcceptEmpty: ipCidrAcceptEmpty,
+		domainOnly:        domainOnly,
 	}
 }
 
@@ -55,7 +57,7 @@ func (r *RuleSetItem) Match(metadata *adapter.InboundContext) bool {
 	snapshot := snapshotRuleMatch(metadata)
 	for _, ruleSet := range r.setList {
 		r.prepareNestedMatch(metadata)
-		if ruleSet.Match(metadata) {
+		if ruleSet.Match(metadata) && (!r.domainOnly || metadata.RuleSetDomainMatched) {
 			snapshot.restore(metadata)
 			return true
 		}
@@ -65,6 +67,9 @@ func (r *RuleSetItem) Match(metadata *adapter.InboundContext) bool {
 }
 
 func (r *RuleSetItem) matchWithOuterGroups(metadata *adapter.InboundContext, outerGroups ruleGroupMatch) bool {
+	if r.domainOnly {
+		return outerGroups.done() && r.Match(metadata)
+	}
 	outerDone := outerGroups.done()
 	var (
 		matched        bool
@@ -113,6 +118,11 @@ func (r *RuleSetItem) prepareNestedMatch(metadata *adapter.InboundContext) {
 	metadata.ResetRuleMatchCache()
 	metadata.IPCIDRMatchSource = r.ipCidrMatchSource
 	metadata.IPCIDRAcceptEmpty = r.ipCidrAcceptEmpty
+	if r.domainOnly {
+		metadata.RuleSetDomainOnly = true
+		metadata.IgnoreDestinationIPCIDRMatch = true
+		metadata.RuleSetDomainMatched = false
+	}
 }
 
 type mergeableRuleProvider interface {
@@ -139,7 +149,7 @@ func matchAnyHeadlessRule(rules []adapter.HeadlessRule, metadata *adapter.Inboun
 	for _, rule := range rules {
 		metadata.ResetRuleMatchCache()
 		if rule.Match(metadata) {
-			if metadata.DeferredIPCIDRMatchGroups == 0 {
+			if metadata.DeferredIPCIDRMatchGroups == 0 && (!metadata.RuleSetDomainOnly || metadata.RuleSetDomainMatched) {
 				snapshot.restore(metadata)
 				return true
 			}
@@ -155,7 +165,7 @@ func matchAnyHeadlessRule(rules []adapter.HeadlessRule, metadata *adapter.Inboun
 }
 
 func (r *RuleSetItem) ContainsDestinationIPCIDRRule() bool {
-	if r.ipCidrMatchSource {
+	if r.ipCidrMatchSource || r.domainOnly {
 		return false
 	}
 	return common.Any(r.setList, func(ruleSet adapter.RuleSet) bool {

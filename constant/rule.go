@@ -16,6 +16,8 @@ const (
 	RuleSetTypeRemote   = "remote"
 	RuleSetFormatSource = "source"
 	RuleSetFormatBinary = "binary"
+	RuleSetFormatText   = "text"
+	RuleSetFormatAuto   = "auto"
 )
 
 const RuleSetTagPlaceholder = "{tag}"

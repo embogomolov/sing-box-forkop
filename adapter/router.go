@@ -22,6 +22,7 @@ type Router interface {
 	HijackDNSPacket(ctx context.Context, payload []byte, writer N.PacketWriter, metadata InboundContext)
 	ConnectionRouterEx
 	RuleSet(tag string) (RuleSet, bool)
+	RuleSets() []RuleSet
 	Rules() []Rule
 	NeedFindProcess() bool
 	NeedFindNeighbor() bool

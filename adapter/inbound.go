@@ -114,6 +114,8 @@ type InboundContext struct {
 	DestinationPortMatch         bool
 	DeferredIPCIDRMatchGroups    uint8
 	IgnoreDestinationIPCIDRMatch bool
+	RuleSetDomainOnly            bool
+	RuleSetDomainMatched         bool
 }
 
 func (c *InboundContext) ResetRuleCache() {

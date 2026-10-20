@@ -55,7 +55,11 @@ func (r *abstractDefaultRule) Match(metadata *adapter.InboundContext) bool {
 	if len(r.allItems) == 0 {
 		return true
 	}
+	domainMatched := metadata.RuleSetDomainMatched
 	matched := r.matchInner(metadata)
+	if !matched || r.invert {
+		metadata.RuleSetDomainMatched = domainMatched
+	}
 	if r.invert {
 		if !matched {
 			metadata.DeferredIPCIDRMatchGroups = 0
@@ -117,7 +121,7 @@ func (r *abstractDefaultRule) evaluateGroups(metadata *adapter.InboundContext) r
 			groups.satisfied |= ruleMatchSourceAddress
 		}
 	}
-	if len(r.sourcePortItems) > 0 {
+	if !metadata.RuleSetDomainOnly && len(r.sourcePortItems) > 0 {
 		groups.required |= ruleMatchSourcePort
 		if matchAnyItem(r.sourcePortItems, metadata) {
 			groups.satisfied |= ruleMatchSourcePort
@@ -127,6 +131,7 @@ func (r *abstractDefaultRule) evaluateGroups(metadata *adapter.InboundContext) r
 		groups.required |= ruleMatchDestinationAddress
 		if matchAnyItem(r.destinationAddressItems, metadata) {
 			groups.satisfied |= ruleMatchDestinationAddress
+			metadata.RuleSetDomainMatched = true
 		}
 	}
 	if r.destinationIPCIDRMatchesDestination(metadata) {
@@ -135,7 +140,7 @@ func (r *abstractDefaultRule) evaluateGroups(metadata *adapter.InboundContext) r
 			groups.satisfied |= ruleMatchDestinationAddress
 		}
 	}
-	if len(r.destinationPortItems) > 0 {
+	if !metadata.RuleSetDomainOnly && len(r.destinationPortItems) > 0 {
 		groups.required |= ruleMatchDestinationPort
 		if matchAnyItem(r.destinationPortItems, metadata) {
 			groups.satisfied |= ruleMatchDestinationPort
@@ -206,6 +211,7 @@ func (r *abstractLogicalRule) Match(metadata *adapter.InboundContext) bool {
 		matched        bool
 		deferredGroups uint8
 	)
+	domainMatched := metadata.RuleSetDomainMatched
 	snapshot := snapshotRuleMatch(metadata)
 	if r.mode == C.LogicalTypeAnd {
 		matched = true
@@ -223,7 +229,7 @@ func (r *abstractLogicalRule) Match(metadata *adapter.InboundContext) bool {
 			metadata.ResetRuleCache()
 			if rule.Match(metadata) {
 				matched = true
-				if metadata.DeferredIPCIDRMatchGroups == 0 {
+				if metadata.DeferredIPCIDRMatchGroups == 0 && (!metadata.RuleSetDomainOnly || metadata.RuleSetDomainMatched) {
 					deferredGroups = 0
 					break
 				}
@@ -232,6 +238,9 @@ func (r *abstractLogicalRule) Match(metadata *adapter.InboundContext) bool {
 		}
 	}
 	snapshot.restore(metadata)
+	if !matched || r.invert {
+		metadata.RuleSetDomainMatched = domainMatched
+	}
 	if matched {
 		metadata.DeferredIPCIDRMatchGroups |= deferredGroups
 	}

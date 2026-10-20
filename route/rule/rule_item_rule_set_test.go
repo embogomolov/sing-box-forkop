@@ -15,6 +15,7 @@ import (
 )
 
 type ruleSetItemTestRouter struct {
+	adapter.Router
 	ruleSets map[string]adapter.RuleSet
 }
 
@@ -94,7 +95,7 @@ func TestRuleSetItemCloseReleasesRefs(t *testing.T) {
 			"first":  firstSet,
 			"second": secondSet,
 		},
-	}, []string{"first", "second"}, false, false)
+	}, []string{"first", "second"}, false, false, false)
 
 	require.NoError(t, item.Start())
 	require.EqualValues(t, 1, firstSet.RefCount())
@@ -117,7 +118,7 @@ func TestRuleSetItemStartRollbackOnFailure(t *testing.T) {
 		ruleSets: map[string]adapter.RuleSet{
 			"first": firstSet,
 		},
-	}, []string{"first", "missing"}, false, false)
+	}, []string{"first", "missing"}, false, false, false)
 
 	err := item.Start()
 	require.ErrorContains(t, err, "rule-set not found: missing")
@@ -132,7 +133,7 @@ func TestRuleSetItemRestartKeepsBalancedRefs(t *testing.T) {
 		ruleSets: map[string]adapter.RuleSet{
 			"first": firstSet,
 		},
-	}, []string{"first"}, false, false)
+	}, []string{"first"}, false, false, false)
 
 	require.NoError(t, item.Start())
 	require.EqualValues(t, 1, firstSet.RefCount())

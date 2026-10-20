@@ -393,7 +393,7 @@ func NewDefaultDNSRule(ctx context.Context, logger log.ContextLogger, options op
 		if options.RuleSetIPCIDRMatchSource {
 			matchSource = true
 		}
-		item := NewRuleSetItem(router, options.RuleSet, matchSource, options.RuleSetIPCIDRAcceptEmpty) //nolint:staticcheck
+		item := NewRuleSetItem(router, options.RuleSet, matchSource, options.RuleSetIPCIDRAcceptEmpty, options.RuleSetDomainOnly) //nolint:staticcheck
 		rule.ruleSetItem = item
 		rule.allItems = append(rule.allItems, item)
 	}

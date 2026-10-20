@@ -175,6 +175,7 @@ type RawDefaultDNSRule struct {
 	PreferredBy              badoption.Listable[string]                                                  `json:"preferred_by,omitempty"`
 	RuleSet                  badoption.Listable[string]                                                  `json:"rule_set,omitempty" reference:"rule_set"`
 	RuleSetIPCIDRMatchSource bool                                                                        `json:"rule_set_ip_cidr_match_source,omitempty"`
+	RuleSetDomainOnly        bool                                                                        `json:"rule_set_domain_only,omitempty"`
 	MatchResponse            *DNSRuleMatchResponse                                                       `json:"match_response,omitempty"`
 	IPCIDR                   badoption.Listable[string]                                                  `json:"ip_cidr,omitempty"`
 	IPIsPrivate              bool                                                                        `json:"ip_is_private,omitempty"`

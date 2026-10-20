@@ -292,7 +292,7 @@ func NewDefaultRule(ctx context.Context, logger log.ContextLogger, options optio
 		if options.RuleSetIPCIDRMatchSource {
 			matchSource = true
 		}
-		item := NewRuleSetItem(router, options.RuleSet, matchSource, false)
+		item := NewRuleSetItem(router, options.RuleSet, matchSource, false, false)
 		rule.ruleSetItem = item
 		rule.allItems = append(rule.allItems, item)
 	}
