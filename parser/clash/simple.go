@@ -3,7 +3,6 @@ package clash
 import (
 	"strings"
 
-	mierupb "github.com/enfein/mieru/v3/pkg/appctl/appctlpb"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/parser/subscription"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -182,9 +181,6 @@ func (m *mieruOptions) Build() (any, error) {
 	if mode != "" {
 		if !strings.HasPrefix(mode, "HANDSHAKE_") {
 			mode = "HANDSHAKE_" + mode
-		}
-		if _, ok := mierupb.HandshakeMode_value[mode]; !ok {
-			return nil, E.New("unsupported Mieru handshake mode: ", m.HandshakeMode)
 		}
 	}
 	if m.MTU < 0 || m.MTU > 65535 {

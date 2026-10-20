@@ -22,9 +22,13 @@ REQUIRED_TAGS=(with_clash_api with_utls badlinkname tfogo_checklinkname0)
 # what it lacks. The full variant carries all of them.
 OPTIONAL_TAGS=(
   with_gvisor with_quic with_wireguard with_openvpn with_trusttunnel
-  with_tailscale with_naive_outbound with_openconnect
+  with_vmess with_snell with_ssh with_shadowtls with_tor with_anytls
+  with_tailscale with_naive_outbound with_openconnect with_mieru
 )
-BASE_TAGS=(with_gvisor with_quic with_wireguard with_openvpn with_trusttunnel)
+BASE_TAGS=(
+  with_gvisor with_quic with_wireguard with_openvpn with_trusttunnel
+  with_vmess with_anytls
+)
 # Forkop runs these tunnels on gVisor's network stack.
 GVISOR_TAGS=(with_wireguard with_openvpn with_openconnect with_tailscale)
 

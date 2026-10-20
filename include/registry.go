@@ -21,26 +21,19 @@ import (
 	"github.com/sagernet/sing-box/dns/transport/mdns"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/protocol/anytls"
 	"github.com/sagernet/sing-box/protocol/block"
 	"github.com/sagernet/sing-box/protocol/bridge"
 	"github.com/sagernet/sing-box/protocol/direct"
 	"github.com/sagernet/sing-box/protocol/group"
 	"github.com/sagernet/sing-box/protocol/http"
-	"github.com/sagernet/sing-box/protocol/mieru"
 	"github.com/sagernet/sing-box/protocol/mixed"
 	"github.com/sagernet/sing-box/protocol/naive"
 	"github.com/sagernet/sing-box/protocol/parser"
 	"github.com/sagernet/sing-box/protocol/redirect"
 	"github.com/sagernet/sing-box/protocol/shadowsocks"
-	"github.com/sagernet/sing-box/protocol/shadowtls"
-	"github.com/sagernet/sing-box/protocol/snell"
 	"github.com/sagernet/sing-box/protocol/socks"
-	"github.com/sagernet/sing-box/protocol/ssh"
-	"github.com/sagernet/sing-box/protocol/tor"
 	"github.com/sagernet/sing-box/protocol/trojan"
 	"github.com/sagernet/sing-box/protocol/vless"
-	"github.com/sagernet/sing-box/protocol/vmess"
 	localProvider "github.com/sagernet/sing-box/provider/local"
 	remoteProvider "github.com/sagernet/sing-box/provider/remote"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -62,14 +55,14 @@ func InboundRegistry() *inbound.Registry {
 	mixed.RegisterInbound(registry)
 
 	shadowsocks.RegisterInbound(registry)
-	snell.RegisterInbound(registry)
-	vmess.RegisterInbound(registry)
+	registerSnellInbound(registry)
+	registerVMessInbound(registry)
 	trojan.RegisterInbound(registry)
 	naive.RegisterInbound(registry)
-	shadowtls.RegisterInbound(registry)
+	registerShadowTLSInbound(registry)
 	vless.RegisterInbound(registry)
-	anytls.RegisterInbound(registry)
-	mieru.RegisterInbound(registry)
+	registerAnyTLSInbound(registry)
+	registerMieruInbound(registry)
 
 	registerTrustTunnelInbound(registry)
 
@@ -94,16 +87,16 @@ func OutboundRegistry() *outbound.Registry {
 	socks.RegisterOutbound(registry)
 	http.RegisterOutbound(registry)
 	shadowsocks.RegisterOutbound(registry)
-	snell.RegisterOutbound(registry)
-	vmess.RegisterOutbound(registry)
+	registerSnellOutbound(registry)
+	registerVMessOutbound(registry)
 	trojan.RegisterOutbound(registry)
 	registerNaiveOutbound(registry)
-	tor.RegisterOutbound(registry)
-	ssh.RegisterOutbound(registry)
-	shadowtls.RegisterOutbound(registry)
+	registerTorOutbound(registry)
+	registerSSHOutbound(registry)
+	registerShadowTLSOutbound(registry)
 	vless.RegisterOutbound(registry)
-	mieru.RegisterOutbound(registry)
-	anytls.RegisterOutbound(registry)
+	registerMieruOutbound(registry)
+	registerAnyTLSOutbound(registry)
 
 	registerTrustTunnelOutbound(registry)
 

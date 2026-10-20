@@ -1,3 +1,5 @@
+//go:build with_mieru
+
 package link
 
 import (
