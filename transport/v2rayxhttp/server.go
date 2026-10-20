@@ -15,42 +15,35 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sagernet/quic-go"
-	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/congestion"
 	"github.com/sagernet/sing-box/common/kmutex"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/common/xray/buf"
 	"github.com/sagernet/sing-box/common/xray/signal/done"
-	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	qtls "github.com/sagernet/sing-quic"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/common/ntp"
 	aTLS "github.com/sagernet/sing/common/tls"
 )
 
 var _ adapter.V2RayServerTransport = (*Server)(nil)
 
 type Server struct {
-	ctx         context.Context
-	logger      logger.ContextLogger
-	tlsConfig   tls.ServerConfig
-	quicConfig  *quic.Config
-	handler     adapter.V2RayServerTransportHandler
-	httpServer  *http.Server
-	http3Server *http3.Server
-	localAddr   net.Addr
-	options     *option.V2RayXHTTPOptions
-	host        string
-	path        string
-	sessionMu   *kmutex.Kmutex[string]
-	sessions    sync.Map
+	ctx        context.Context
+	logger     logger.ContextLogger
+	tlsConfig  tls.ServerConfig
+	handler    adapter.V2RayServerTransportHandler
+	httpServer *http.Server
+	h3         *h3Server
+	localAddr  net.Addr
+	options    *option.V2RayXHTTPOptions
+	host       string
+	path       string
+	sessionMu  *kmutex.Kmutex[string]
+	sessions   sync.Map
 }
 
 func NewServer(ctx context.Context, logger logger.ContextLogger, options option.V2RayXHTTPOptions, tlsConfig tls.ServerConfig, handler adapter.V2RayServerTransportHandler) (*Server, error) {
@@ -81,22 +74,11 @@ func NewServer(ctx context.Context, logger logger.ContextLogger, options option.
 			},
 		}
 	} else {
-		congestionControlFactory, err := congestion.NewCongestionControl(options.CongestionController, options.CWND, ntp.TimeFuncFromContext(ctx))
+		h3, err := newH3Server(ctx, &options, server)
 		if err != nil {
 			return nil, err
 		}
-		server.quicConfig = &quic.Config{
-			DisablePathMTUDiscovery: !C.IsLinux && !C.IsWindows,
-		}
-		server.http3Server = &http3.Server{
-			Handler: server,
-			ConnContext: func(ctx context.Context, conn *quic.Conn) context.Context {
-				if congestionControlFactory != nil {
-					conn.SetCongestionControl(congestionControlFactory(conn))
-				}
-				return log.ContextWithNewID(ctx)
-			},
-		}
+		server.h3 = h3
 	}
 	return server, nil
 }
@@ -423,12 +405,7 @@ func (s *Server) Serve(listener net.Listener) error {
 
 func (s *Server) ServePacket(listener net.PacketConn) error {
 	if s.network() == N.NetworkUDP {
-		quicListener, err := qtls.ListenEarly(listener, s.tlsConfig, s.quicConfig)
-		if err != nil {
-			return err
-		}
-		s.localAddr = quicListener.Addr()
-		return s.http3Server.ServeListener(quicListener)
+		return s.h3.serve(s, listener)
 	}
 	return os.ErrInvalid
 }
@@ -437,7 +414,7 @@ func (s *Server) Close() error {
 	if s.network() == N.NetworkTCP {
 		return common.Close(s.httpServer)
 	}
-	return common.Close(s.http3Server)
+	return s.h3.close()
 }
 
 func (s *Server) network() string {

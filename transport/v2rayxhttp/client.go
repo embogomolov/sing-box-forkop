@@ -13,8 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sagernet/quic-go"
-	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/congestion"
 	"github.com/sagernet/sing-box/common/tls"
@@ -22,14 +20,13 @@ import (
 	"github.com/sagernet/sing-box/common/xray/net"
 	"github.com/sagernet/sing-box/common/xray/pipe"
 	"github.com/sagernet/sing-box/common/xray/signal/done"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	qtls "github.com/sagernet/sing-quic"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/common/ntp"
 	sHTTP "github.com/sagernet/sing/protocol/http"
 	"github.com/sagernet/sing/service"
 	"golang.org/x/net/http2"
@@ -49,6 +46,9 @@ type Client struct {
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayXHTTPOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
 	if tlsConfig != nil && len(tlsConfig.NextProtos()) == 0 {
 		tlsConfig.SetNextProtos([]string{"h2"})
+	}
+	if !C.WithQUIC && decideHTTPVersion(tlsConfig) == "3" {
+		return nil, C.ErrQUICNotIncluded
 	}
 	if _, err := congestion.NewCongestionControl(options.CongestionController, options.CWND, nil); err != nil {
 		return nil, err
@@ -97,6 +97,9 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		}
 		if tlsConfig2 != nil && len(tlsConfig2.NextProtos()) == 0 {
 			tlsConfig2.SetNextProtos([]string{"h2"})
+		}
+		if !C.WithQUIC && decideHTTPVersion(tlsConfig2) == "3" {
+			return nil, C.ErrQUICNotIncluded
 		}
 		baseRequestURL2, err = getBaseRequestURL(&options2.V2RayXHTTPBaseOptions, dest2, tlsConfig2)
 		if err != nil {
@@ -323,39 +326,7 @@ func createHTTPClient(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, op
 	var transport http.RoundTripper
 	switch httpVersion {
 	case "3":
-		if keepAlivePeriod == 0 {
-			keepAlivePeriod = net.QuicgoH3KeepAlivePeriod
-		}
-		if keepAlivePeriod < 0 {
-			keepAlivePeriod = 0
-		}
-		congestionControlFactory, _ := congestion.NewCongestionControl(options.CongestionController, options.CWND, ntp.TimeFuncFromContext(ctx))
-		quicConfig := &quic.Config{
-			MaxIdleTimeout: net.ConnIdleTimeout,
-			// these two are defaults of quic-go/http3. the default of quic-go (no
-			// http3) is different, so it is hardcoded here for clarity.
-			// https://github.com/quic-go/quic-go/blob/b8ea5c798155950fb5bbfdd06cad1939c9355878/http3/client.go#L36-L39
-			MaxIncomingStreams: -1,
-			KeepAlivePeriod:    keepAlivePeriod,
-		}
-		transport = &http3.Transport{
-			QUICConfig: quicConfig,
-			Dial: func(ctx context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
-				udpConn, dErr := dialer.DialContext(ctx, N.NetworkUDP, dest)
-				if dErr != nil {
-					return nil, dErr
-				}
-				conn, dErr := qtls.DialEarly(ctx, udpConn, tlsConfig, cfg)
-				if dErr != nil {
-					_ = udpConn.Close()
-					return nil, dErr
-				}
-				if congestionControlFactory != nil {
-					conn.SetCongestionControl(congestionControlFactory(conn))
-				}
-				return conn, nil
-			},
-		}
+		transport = newHTTP3Transport(ctx, dest, dialer, options, tlsConfig, keepAlivePeriod)
 	case "2":
 		if keepAlivePeriod == 0 {
 			keepAlivePeriod = net.ChromeH2KeepAlivePeriod

@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"unsafe"
 
-	"github.com/sagernet/quic-go/http3"
 	E "github.com/sagernet/sing/common/exceptions"
 
 	"golang.org/x/net/http2"
@@ -19,10 +18,10 @@ func ResetTransport(rawTransport http.RoundTripper) http.RoundTripper {
 	case *http2.Transport:
 		CloseHTTP2Connections(transport)
 		return transport
-	case *http3.Transport:
-		transport.Close()
-		return transport
 	default:
+		if reset, ok := resetHTTP3Transport(rawTransport); ok {
+			return reset
+		}
 		panic(E.New("unknown transport type: ", reflect.TypeOf(transport)))
 	}
 }
