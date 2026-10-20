@@ -138,6 +138,74 @@ func TestParseMieruStandardLink(t *testing.T) {
 	}
 }
 
+func TestParseMieruLinksAsMieruReadsThem(t *testing.T) {
+	tcp, udp := mierupb.TransportProtocol_TCP.Enum(), mierupb.TransportProtocol_UDP.Enum()
+	level := mierupb.MultiplexingLevel_MULTIPLEXING_HIGH
+	profiles := []*mierupb.ClientProfile{{
+		ProfileName: proto.String("plain"),
+		User:        &mierupb.User{Name: proto.String("alice"), Password: proto.String("s3cret")},
+		Servers: []*mierupb.ServerEndpoint{{
+			DomainName:   proto.String("mieru.example"),
+			PortBindings: []*mierupb.PortBinding{{Port: proto.Int32(443), Protocol: tcp}},
+		}},
+	}, {
+		ProfileName:   proto.String("every field"),
+		User:          &mierupb.User{Name: proto.String("b@b:/?#"), Password: proto.String("p&s=s+w%d")},
+		Mtu:           proto.Int32(1400),
+		Multiplexing:  &mierupb.MultiplexingConfig{Level: &level},
+		HandshakeMode: mierupb.HandshakeMode_HANDSHAKE_NO_WAIT.Enum(),
+		TrafficPattern: &mierupb.TrafficPattern{
+			Seed:        proto.Int32(7),
+			UnlockAll:   proto.Bool(true),
+			TcpFragment: &mierupb.TCPFragment{Enable: proto.Bool(true), MaxSleepMs: proto.Int32(10)},
+		},
+		Servers: []*mierupb.ServerEndpoint{{
+			IpAddress: proto.String("203.0.113.7"),
+			PortBindings: []*mierupb.PortBinding{
+				{PortRange: proto.String("2012-2022"), Protocol: udp},
+				{Port: proto.Int32(2030), Protocol: udp},
+			},
+		}, {
+			IpAddress:    proto.String("2001:db8::7"),
+			PortBindings: []*mierupb.PortBinding{{Port: proto.Int32(8964), Protocol: tcp}},
+		}},
+	}}
+	var links []string
+	for _, profile := range profiles {
+		profileLinks, err := mieruappctl.ClientProfileToMultiURLs(profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		links = append(links, profileLinks...)
+	}
+	configLink, err := mieruappctl.ClientConfigToURL(&mierupb.ClientConfig{Profiles: profiles, ActiveProfile: proto.String("every field")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	links = append(links, configLink,
+		"mierus://alice@mieru.example?profile=p&port=443&protocol=TCP",
+		"mierus://alice:s3cret@mieru.example?port=443&protocol=TCP",
+		"mierus://alice:s3cret@mieru.example?profile=p&port=443",
+		"mierus://alice:s3cret@mieru.example?profile=p&port=0&protocol=TCP",
+		"mierus://alice:s3cret@mieru.example?profile=p&port=65536&protocol=TCP",
+		"mierus://alice:s3cret@mieru.example?profile=p&port=2022-2012&protocol=TCP",
+		"mierus://alice:s3cret@mieru.example?profile=p&port=1-2-3&protocol=TCP",
+		"mierus://alice:s3cret@mieru.example?profile=p&mtu=x&port=443&protocol=TCP",
+		"mierus://alice:s3cret@mieru.example?profile=p&traffic-pattern=%25&port=443&protocol=TCP",
+		"mieru://not base64",
+	)
+	for _, link := range links {
+		want, wantErr := mieruappctl.ParseURLClientConfig(link)
+		got, err := parseMieruClientConfig(link)
+		if (err == nil) != (wantErr == nil) {
+			t.Fatalf("%s: got error %v, mieru got %v", link, err, wantErr)
+		}
+		if !proto.Equal(got, want) {
+			t.Fatalf("%s:\ngot   %v\nmieru %v", link, got, want)
+		}
+	}
+}
+
 func TestParseSOCKSLinkPreservesEqualCredentials(t *testing.T) {
 	outbound, err := ParseSubscriptionLink("socks5://same:same@127.0.0.1:1080#equal-creds")
 	if err != nil {
