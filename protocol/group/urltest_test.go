@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -367,5 +368,32 @@ func TestURLTestStartsTheCountAgainAfterADial(t *testing.T) {
 	fail()
 	if count := urlTest.group.failures.count; count != maxDialFailures-1 || second.dialCount != 0 {
 		t.Fatalf("a dial that went through did not start the count again: %d failures, %d checks", count, second.dialCount)
+	}
+}
+
+type urlTestErrorLogger struct {
+	log.ContextLogger
+	errors int
+}
+
+func (l *urlTestErrorLogger) ErrorContext(context.Context, ...any) { l.errors++ }
+
+// The connection manager logs a failed dial with the outbound it dialed, the group; the error
+// names the member that failed, and the group logs nothing of its own.
+func TestURLTestDialErrorNamesTheMember(t *testing.T) {
+	first := newFallbackHealthTestOutbound("first", false)
+	urlTest := newDialTestURLTest(t, first, newFallbackHealthTestOutbound("second", true))
+	logger := &urlTestErrorLogger{ContextLogger: urlTest.logger}
+	urlTest.logger = logger
+	_, err := urlTest.DialContext(context.Background(), N.NetworkTCP, M.Socksaddr{})
+	if err == nil || !strings.Contains(err.Error(), "outbound/test[first]") {
+		t.Fatalf("the error does not name the member: %v", err)
+	}
+	_, err = urlTest.ListenPacket(context.Background(), M.Socksaddr{})
+	if err == nil || !strings.Contains(err.Error(), "outbound/test[first]") {
+		t.Fatalf("the error does not name the member: %v", err)
+	}
+	if logger.errors != 0 {
+		t.Fatalf("the group logged the failure itself %d times", logger.errors)
 	}
 }

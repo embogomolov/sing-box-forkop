@@ -261,10 +261,15 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 		s.group.dialSucceeded()
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
-	s.logger.ErrorContext(ctx, err)
 	s.group.deleteHistory(outbound.Tag())
 	s.group.dialFailed(ctx, outbound, err)
-	return nil, err
+	return nil, memberError(outbound, err)
+}
+
+// memberError names the member that failed: the caller logs the error with the outbound it
+// dialed, which is the group or a selector above it.
+func memberError(member adapter.Outbound, err error) error {
+	return E.Cause(err, "outbound/", member.Type(), "[", member.Tag(), "]")
 }
 
 func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -283,10 +288,9 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 		s.group.dialSucceeded()
 		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
-	s.logger.ErrorContext(ctx, err)
 	s.group.deleteHistory(outbound.Tag())
 	s.group.dialFailed(ctx, outbound, err)
-	return nil, err
+	return nil, memberError(outbound, err)
 }
 
 func (s *URLTest) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
