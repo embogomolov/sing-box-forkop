@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing/common"
@@ -30,14 +31,14 @@ type ClientBind struct {
 	reservedAccess      sync.RWMutex
 	reservedForEndpoint map[netip.AddrPort][3]uint8
 	connAccess          sync.Mutex
-	conn                *wireConn
+	conn                atomic.Pointer[wireConn]
 	done                chan struct{}
 	isConnect           bool
-	connectAddr         netip.AddrPort
+	connectAddr         M.Socksaddr
 	reserved            [3]uint8
 }
 
-func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, isConnect bool, connectAddr netip.AddrPort, reserved [3]uint8) *ClientBind {
+func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, isConnect bool, connectAddr M.Socksaddr, reserved [3]uint8) *ClientBind {
 	return &ClientBind{
 		ctx:                 ctx,
 		logger:              logger,
@@ -51,8 +52,24 @@ func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, i
 	}
 }
 
+// hasReserved reports whether a Cloudflare reserved value is configured. Without
+// one the bind leaves bytes 1-3 alone, where an AmneziaWG magic header lives.
+func (c *ClientBind) hasReserved() bool {
+	if c.reserved != [3]uint8{} {
+		return true
+	}
+	c.reservedAccess.RLock()
+	defer c.reservedAccess.RUnlock()
+	for _, reserved := range c.reservedForEndpoint {
+		if reserved != [3]uint8{} {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *ClientBind) connect() (*wireConn, error) {
-	serverConn := c.conn
+	serverConn := c.conn.Load()
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
@@ -68,7 +85,7 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		return nil, net.ErrClosed
 	default:
 	}
-	serverConn = c.conn
+	serverConn = c.conn.Load()
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
@@ -78,11 +95,11 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		}
 	}
 	if c.isConnect {
-		udpConn, err := c.dialer.DialContext(c.bindCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
+		udpConn, err := c.dialer.DialContext(c.bindCtx, N.NetworkUDP, c.connectAddr)
 		if err != nil {
 			return nil, err
 		}
-		c.conn = &wireConn{
+		serverConn = &wireConn{
 			PacketConn: bufio.NewUnbindPacketConn(udpConn),
 			done:       make(chan struct{}),
 		}
@@ -91,12 +108,13 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.conn = &wireConn{
+		serverConn = &wireConn{
 			PacketConn: bufio.NewPacketConn(udpConn),
 			done:       make(chan struct{}),
 		}
 	}
-	return c.conn, nil
+	c.conn.Store(serverConn)
+	return serverConn, nil
 }
 
 func (c *ClientBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint16, err error) {
@@ -135,11 +153,15 @@ func (c *ClientBind) receive(packets [][]byte, sizes []int, eps []conn.Endpoint)
 		return
 	}
 	sizes[0] = n
-	if n > 3 {
+	if n > 3 && c.hasReserved() {
 		b := packets[0]
 		clear(b[1:4])
 	}
-	eps[0] = remoteEndpoint(M.SocksaddrFromNet(addr).Unwrap().AddrPort())
+	if c.connectAddr.IsFqdn() {
+		eps[0] = domainEndpoint(c.connectAddr)
+	} else {
+		eps[0] = remoteEndpoint(M.SocksaddrFromNet(addr).Unwrap().AddrPort())
+	}
 	count = 1
 	return
 }
@@ -155,7 +177,7 @@ func (c *ClientBind) Close() error {
 	}
 	c.connAccess.Lock()
 	defer c.connAccess.Unlock()
-	common.Close(common.PtrOrNil(c.conn))
+	common.Close(common.PtrOrNil(c.conn.Load()))
 	return nil
 }
 
@@ -170,7 +192,10 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 		time.Sleep(time.Second)
 		return err
 	}
-	destination := netip.AddrPort(ep.(remoteEndpoint))
+	var destination netip.AddrPort
+	if endpoint, isRemote := ep.(remoteEndpoint); isRemote {
+		destination = netip.AddrPort(endpoint)
+	}
 	for _, buf := range bufs {
 		if offset > 0 {
 			buf = buf[offset:]
@@ -182,7 +207,9 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 			if !loaded {
 				reserved = c.reserved
 			}
-			copy(buf[1:4], reserved[:])
+			if reserved != [3]uint8{} {
+				copy(buf[1:4], reserved[:])
+			}
 		}
 		_, err = udpConn.WriteToUDPAddrPort(buf, destination)
 		if err != nil {
@@ -194,6 +221,9 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 }
 
 func (c *ClientBind) ParseEndpoint(s string) (conn.Endpoint, error) {
+	if c.connectAddr.IsFqdn() && s == c.connectAddr.String() {
+		return domainEndpoint(c.connectAddr), nil
+	}
 	ap, err := netip.ParseAddrPort(s)
 	if err != nil {
 		return nil, err
@@ -263,5 +293,35 @@ func (e remoteEndpoint) DstIP() netip.Addr {
 }
 
 func (e remoteEndpoint) SrcIP() netip.Addr {
+	return netip.Addr{}
+}
+
+var _ conn.Endpoint = (*domainEndpoint)(nil)
+
+// domainEndpoint is the peer of a bind connected to it by name: the dialer
+// resolves the name where it connects, and every packet goes to and comes from
+// that connection.
+type domainEndpoint M.Socksaddr
+
+func (e domainEndpoint) ClearSrc() {
+}
+
+func (e domainEndpoint) SrcToString() string {
+	return ""
+}
+
+func (e domainEndpoint) DstToString() string {
+	return M.Socksaddr(e).String()
+}
+
+func (e domainEndpoint) DstToBytes() []byte {
+	return []byte(M.Socksaddr(e).String())
+}
+
+func (e domainEndpoint) DstIP() netip.Addr {
+	return netip.Addr{}
+}
+
+func (e domainEndpoint) SrcIP() netip.Addr {
 	return netip.Addr{}
 }

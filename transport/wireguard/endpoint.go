@@ -8,9 +8,11 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/service/powerreport"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
@@ -49,6 +51,17 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		return nil, E.Cause(err, "decode private key")
 	}
 	privateKey := hex.EncodeToString(privateKeyBytes)
+	// The device takes the header protection key as a fixed 32-byte value and refuses anything else
+	// only after the configuration was accepted, so a wrong key is refused here.
+	if options.Amnezia != nil && options.Amnezia.HeaderProtectionKey != "" {
+		headerProtectionKeyBytes, err := base64.StdEncoding.DecodeString(options.Amnezia.HeaderProtectionKey)
+		if err != nil {
+			return nil, E.Cause(err, "decode header protection key")
+		}
+		if len(headerProtectionKeyBytes) != device.HeaderCipherKeySize {
+			return nil, E.New("bad header protection key length: ", len(headerProtectionKeyBytes))
+		}
+	}
 	ipcConf := "private_key=" + privateKey
 	if options.ListenPort != 0 {
 		ipcConf += "\nlisten_port=" + F.ToString(options.ListenPort)
@@ -139,7 +152,10 @@ func (e *Endpoint) Start(postStart bool) error {
 	if postStart != hasDomainPeer {
 		return nil
 	}
-	var bind conn.Bind
+	var (
+		bind          conn.Bind
+		connectDomain bool
+	)
 	udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 	if isUDPListener {
 		listenerControl, egressEnabled := udpListener.UDPListenerControl()
@@ -172,14 +188,23 @@ func (e *Endpoint) Start(postStart bool) error {
 	} else {
 		var (
 			isConnect   bool
-			connectAddr netip.AddrPort
+			connectAddr M.Socksaddr
 			reserved    [3]uint8
 		)
+		// A lone peer is dialed through the detour by its address, or by its
+		// name, which the detour resolves where it connects as it would for any
+		// other connection. Racing the addresses of the name from here would send
+		// them all through one proxied UDP session, which a proxy that cannot
+		// reach one of them may end for all.
 		if len(e.peers) == 1 {
 			reserved = e.peers[0].reserved
 			if e.peers[0].endpoint.IsValid() {
 				isConnect = true
-				connectAddr = e.peers[0].endpoint
+				connectAddr = M.SocksaddrFromNetIP(e.peers[0].endpoint)
+			} else if e.peers[0].destination.IsDomain() {
+				isConnect = true
+				connectAddr = e.peers[0].destination
+				connectDomain = true
 			}
 		}
 		bind = NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, isConnect, connectAddr, reserved)
@@ -207,7 +232,7 @@ func (e *Endpoint) Start(postStart bool) error {
 	e.tunDevice.SetDevice(wgDevice)
 	domainPeers := make(map[device.NoisePublicKey]*peerConfig)
 	for peerIndex, peer := range e.peers {
-		if !peer.destination.IsDomain() {
+		if !peer.destination.IsDomain() || connectDomain {
 			continue
 		}
 		var publicKey device.NoisePublicKey
@@ -245,13 +270,98 @@ func (e *Endpoint) Start(postStart bool) error {
 	}
 	var ipcConf strings.Builder
 	ipcConf.WriteString(e.ipcConf)
+	if e.options.Amnezia != nil {
+		if e.options.Amnezia.JC > 0 {
+			ipcConf.WriteString("\njc=" + strconv.Itoa(e.options.Amnezia.JC))
+		}
+		if e.options.Amnezia.JMin > 0 {
+			ipcConf.WriteString("\njmin=" + strconv.Itoa(e.options.Amnezia.JMin))
+		}
+		if e.options.Amnezia.JMax > 0 {
+			ipcConf.WriteString("\njmax=" + strconv.Itoa(e.options.Amnezia.JMax))
+		}
+		if e.options.Amnezia.S1 > 0 {
+			ipcConf.WriteString("\ns1=" + strconv.Itoa(e.options.Amnezia.S1))
+		}
+		if e.options.Amnezia.S2 > 0 {
+			ipcConf.WriteString("\ns2=" + strconv.Itoa(e.options.Amnezia.S2))
+		}
+		if e.options.Amnezia.S3 > 0 {
+			ipcConf.WriteString("\ns3=" + strconv.Itoa(e.options.Amnezia.S3))
+		}
+		if e.options.Amnezia.S4 > 0 {
+			ipcConf.WriteString("\ns4=" + strconv.Itoa(e.options.Amnezia.S4))
+		}
+		if e.options.Amnezia.H1 != nil {
+			ipcConf.WriteString("\nh1=" + e.options.Amnezia.H1.String())
+		}
+		if e.options.Amnezia.H2 != nil {
+			ipcConf.WriteString("\nh2=" + e.options.Amnezia.H2.String())
+		}
+		if e.options.Amnezia.H3 != nil {
+			ipcConf.WriteString("\nh3=" + e.options.Amnezia.H3.String())
+		}
+		if e.options.Amnezia.H4 != nil {
+			ipcConf.WriteString("\nh4=" + e.options.Amnezia.H4.String())
+		}
+		if e.options.Amnezia.I1 != "" {
+			ipcConf.WriteString("\ni1=" + e.options.Amnezia.I1)
+		}
+		if e.options.Amnezia.I2 != "" {
+			ipcConf.WriteString("\ni2=" + e.options.Amnezia.I2)
+		}
+		if e.options.Amnezia.I3 != "" {
+			ipcConf.WriteString("\ni3=" + e.options.Amnezia.I3)
+		}
+		if e.options.Amnezia.I4 != "" {
+			ipcConf.WriteString("\ni4=" + e.options.Amnezia.I4)
+		}
+		if e.options.Amnezia.I5 != "" {
+			ipcConf.WriteString("\ni5=" + e.options.Amnezia.I5)
+		}
+		if e.options.Amnezia.HeaderProtectionKey != "" {
+			headerProtectionKeyBytes, err := base64.StdEncoding.DecodeString(e.options.Amnezia.HeaderProtectionKey)
+			if err != nil {
+				wgDevice.Close()
+				return E.Cause(err, "decode header protection key")
+			}
+			ipcConf.WriteString("\nheader_protection_key=" + hex.EncodeToString(headerProtectionKeyBytes))
+		}
+		if e.options.Amnezia.ContentPaddingAddition != nil {
+			ipcConf.WriteString("\ncontent_padding_addition=" + e.options.Amnezia.ContentPaddingAddition.String())
+		}
+		if e.options.Amnezia.RekeyAfterTime != nil {
+			ipcConf.WriteString("\nrekey_after_time=" + e.options.Amnezia.RekeyAfterTime.String())
+		}
+		if e.options.Amnezia.RekeyTimeout != nil {
+			ipcConf.WriteString("\nrekey_timeout=" + e.options.Amnezia.RekeyTimeout.String())
+		}
+		if e.options.Amnezia.RejectAfterTime != nil {
+			ipcConf.WriteString("\nreject_after_time=" + e.options.Amnezia.RejectAfterTime.String())
+		}
+		if e.options.Amnezia.KeepaliveTimeout != nil {
+			ipcConf.WriteString("\nkeepalive_timeout=" + e.options.Amnezia.KeepaliveTimeout.String())
+		}
+		if e.options.Amnezia.MaxHandshakeAttempts != nil {
+			ipcConf.WriteString("\nmax_handshake_attempts=" + e.options.Amnezia.MaxHandshakeAttempts.String())
+		}
+		if e.options.Amnezia.RandomTrailers {
+			ipcConf.WriteString("\nrandom_trailers=true")
+		}
+		if e.options.Amnezia.DisableCookies {
+			ipcConf.WriteString("\ndisable_cookies=true")
+		}
+	}
 	for _, peer := range e.peers {
 		ipcConf.WriteString(peer.GenerateIpcLines())
+	}
+	if connectDomain {
+		ipcConf.WriteString("\nendpoint=" + e.peers[0].destination.String())
 	}
 	err = wgDevice.IpcSet(ipcConf.String())
 	if err != nil {
 		wgDevice.Close()
-		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
+		return E.Cause(err, "setup wireguard")
 	}
 	e.device = wgDevice
 	e.pause = service.FromContext[pause.Manager](e.options.Context)
@@ -323,7 +433,7 @@ type peerConfig struct {
 	publicKeyHex    string
 	preSharedKeyHex string
 	allowedIPs      []netip.Prefix
-	keepalive       uint16
+	keepalive       *option.Range[uint32]
 	reserved        [3]uint8
 }
 
@@ -339,8 +449,8 @@ func (c peerConfig) GenerateIpcLines() string {
 	for _, allowedIP := range c.allowedIPs {
 		ipcLines.WriteString("\nallowed_ip=" + allowedIP.String())
 	}
-	if c.keepalive > 0 {
-		ipcLines.WriteString("\npersistent_keepalive_interval=" + F.ToString(c.keepalive))
+	if c.keepalive != nil {
+		ipcLines.WriteString("\npersistent_keepalive_interval=" + c.keepalive.String())
 	}
 	return ipcLines.String()
 }

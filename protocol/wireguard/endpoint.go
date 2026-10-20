@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"net/netip"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +33,7 @@ var (
 
 func RegisterEndpoint(registry *endpoint.Registry) {
 	endpoint.Register[option.WireGuardEndpointOptions](registry, C.TypeWireGuard, NewEndpoint)
+	endpoint.Register[option.AmneziaWGEndpointOptions](registry, C.TypeAmneziaWG, NewAmneziaWGEndpoint)
 }
 
 type Endpoint struct {
@@ -44,13 +44,65 @@ type Endpoint struct {
 	logger         logger.ContextLogger
 	localAddresses []netip.Prefix
 	endpoint       *wireguard.Endpoint
-	bindAccess     sync.Mutex
+	device         *sharedDevice
 	started        atomic.Bool
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
+	return newEndpoint(ctx, router, logger, C.TypeWireGuard, tag, options.WireGuardCommonOptions, oneSidedAmneziaOptions(options.Amnezia))
+}
+
+func NewAmneziaWGEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.AmneziaWGEndpointOptions) (adapter.Endpoint, error) {
+	return newEndpoint(ctx, router, logger, C.TypeAmneziaWG, tag, options.WireGuardCommonOptions, amneziaOptions(options.Amnezia))
+}
+
+// oneSidedAmneziaOptions maps the obfuscation a peer never has to know about.
+func oneSidedAmneziaOptions(options *option.OneSidedAmnezia) *wireguard.AmneziaOptions {
+	if options == nil {
+		return nil
+	}
+	return &wireguard.AmneziaOptions{
+		JC:                     options.JC,
+		JMin:                   options.JMin,
+		JMax:                   options.JMax,
+		I1:                     options.I1,
+		I2:                     options.I2,
+		I3:                     options.I3,
+		I4:                     options.I4,
+		I5:                     options.I5,
+		ContentPaddingAddition: options.ContentPaddingAddition,
+		RekeyAfterTime:         options.RekeyAfterTime,
+		RekeyTimeout:           options.RekeyTimeout,
+		RejectAfterTime:        options.RejectAfterTime,
+		KeepaliveTimeout:       options.KeepaliveTimeout,
+		MaxHandshakeAttempts:   options.MaxHandshakeAttempts,
+		DisableCookies:         options.DisableCookies,
+	}
+}
+
+// amneziaOptions adds the parameters that only match a peer speaking AmneziaWG.
+func amneziaOptions(options *option.WireGuardAmnezia) *wireguard.AmneziaOptions {
+	if options == nil {
+		return nil
+	}
+	amnezia := oneSidedAmneziaOptions(&options.OneSidedAmnezia)
+	amnezia.S1 = options.S1
+	amnezia.S2 = options.S2
+	amnezia.S3 = options.S3
+	amnezia.S4 = options.S4
+	amnezia.H1 = options.H1
+	amnezia.H2 = options.H2
+	amnezia.H3 = options.H3
+	amnezia.H4 = options.H4
+	amnezia.HeaderProtectionKey = options.HeaderProtectionKey
+	amnezia.RandomTrailers = options.RandomTrailers
+	return amnezia
+}
+
+func newEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, endpointType string, tag string, options option.WireGuardCommonOptions, amnezia *wireguard.AmneziaOptions) (adapter.Endpoint, error) {
+	options.UDPFragmentDefault = true
 	ep := &Endpoint{
-		Adapter:        endpoint.NewAdapterWithDialerOptions(C.TypeWireGuard, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
+		Adapter:        endpoint.NewAdapterWithDialerOptions(endpointType, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
 		ctx:            ctx,
 		router:         router,
 		dnsRouter:      service.FromContext[adapter.DNSRouter](ctx),
@@ -60,13 +112,36 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.Detour != "" && options.ListenPort != 0 {
 		return nil, E.New("`listen_port` is conflict with `detour`")
 	}
+	configuration, identities, err := sharedDeviceKey(endpointType, options, amnezia)
+	if err != nil {
+		return nil, err
+	}
+	registry := deviceRegistryFromContext(ctx)
+	if registry != nil {
+		registry.access.Lock()
+		defer registry.access.Unlock()
+		device, conflicts := registry.find(configuration, identities)
+		if device != nil {
+			device.attach(ep)
+			ep.device = device
+			ep.endpoint = device.endpoint
+			logger.Info("shares the WireGuard device of endpoint[", device.primary().Tag(), "]")
+			return ep, nil
+		}
+		for _, conflict := range conflicts {
+			logger.Warn("endpoint[", conflict, "] holds the same WireGuard key for the same peer with other settings: the peer keeps one session per key, so the two endpoints will take it from each other")
+		}
+	}
 	outboundDialer, err := dialer.NewWithOptions(dialer.Options{
 		Context: ctx,
 		Options: options.DialerOptions,
 		RemoteIsDomain: common.Any(options.Peers, func(it option.WireGuardPeer) bool {
 			return !M.ParseAddr(it.Address).IsValid()
 		}),
-		ResolverOnDetour: true,
+		// The transport dials a lone peer through the detour by name, so the
+		// detour resolves it unless a domain resolver says otherwise, as for any
+		// outbound; several peers are resolved here and raced.
+		ResolverOnDetour: len(options.Peers) > 1,
 	})
 	if err != nil {
 		return nil, err
@@ -78,11 +153,12 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		udpTimeout = C.UDPTimeout
 	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
+	device := &sharedDevice{registry: registry, configuration: configuration, identities: identities}
 	wgEndpoint, err := wireguard.NewEndpoint(wireguard.EndpointOptions{
 		Context:         ctx,
 		Logger:          logger,
 		System:          options.System,
-		Handler:         ep,
+		Handler:         device,
 		UDPTimeout:      udpTimeout,
 		ICMPTimeout:     C.ICMPTimeout,
 		UDPMapping:      tun.NATMapping(options.UDPMapping),
@@ -102,7 +178,8 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		CreateDialer: func(interfaceName string) N.Dialer {
 			return common.Must1(dialer.NewDefault(ctx, option.DialerOptions{
 				AbstractDialerOptions: option.AbstractDialerOptions{
-					BindInterface: interfaceName,
+					BindInterface:      interfaceName,
+					UDPFragmentDefault: true,
 				},
 			}))
 		},
@@ -126,30 +203,39 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			}
 		}),
 		Workers: options.Workers,
+		Amnezia: amnezia,
 	})
 	if err != nil {
 		return nil, err
 	}
+	device.endpoint = wgEndpoint
+	device.attach(ep)
+	ep.device = device
 	ep.endpoint = wgEndpoint
+	if registry != nil {
+		registry.devices = append(registry.devices, device)
+	}
 	return ep, nil
 }
 
 func (w *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
 	case adapter.StartStateInitialize:
-		scope.Add(w.endpoint.Close)
+		scope.Add(func() error {
+			return w.device.release(w)
+		})
 	case adapter.StartStateStart:
-		return w.endpoint.Start(false)
+		return w.device.start(false)
 	case adapter.StartStatePostStart:
-		err := w.endpoint.Start(true)
+		err := w.device.start(true)
 		if err != nil {
 			return err
 		}
 		w.started.Store(true)
 		scope.Add(func() error {
-			w.bindAccess.Lock()
+			w.device.bindAccess.Lock()
 			w.started.Store(false)
-			w.bindAccess.Unlock()
+			w.device.bindAccess.Unlock()
 			return nil
 		})
 	}
@@ -157,15 +243,15 @@ func (w *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 }
 
 func (w *Endpoint) InterfaceUpdated(ctx context.Context) {
-	if !w.started.Load() {
+	if !w.started.Load() || w.device.primary() != w {
 		return
 	}
 	go w.updateBind(ctx)
 }
 
 func (w *Endpoint) updateBind(ctx context.Context) {
-	w.bindAccess.Lock()
-	defer w.bindAccess.Unlock()
+	w.device.bindAccess.Lock()
+	defer w.device.bindAccess.Unlock()
 	if ctx.Err() != nil || !w.started.Load() {
 		return
 	}

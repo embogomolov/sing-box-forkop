@@ -17,9 +17,8 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 )
 
-// gVisor retries an unanswered SYN for about two minutes, and nothing above
-// the netstack puts a deadline on a dial, so a silent peer held every
-// connection through the tunnel that long.
+// gVisor retries an unanswered SYN for about two minutes, and nothing above the netstack bounds a
+// dial.
 func TestDialTCPWithBindGivesUpOnSilentPeer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("waits for the connect timeout")
