@@ -23,6 +23,10 @@ import (
 // so a link written here is the one the endpoint exports for the same settings.
 const trustTunnelLinkVersion = 2
 
+// Links are written as version 1: the stable TrustTunnel releases (endpoint 1.1,
+// client 1.1.11) refuse a newer one, and version 2 adds no field written here.
+const trustTunnelLinkWrittenVersion = 1
+
 const (
 	trustTunnelFieldVersion uint64 = iota
 	trustTunnelFieldHostname
@@ -280,7 +284,7 @@ func generateTrustTunnelLink(outbound option.Outbound) (string, error) {
 			certificate = append(certificate, block.Bytes...)
 		}
 	}
-	payload := appendTrustTunnelField(nil, trustTunnelFieldVersion, quicvarint.Append(nil, trustTunnelLinkVersion))
+	payload := appendTrustTunnelField(nil, trustTunnelFieldVersion, quicvarint.Append(nil, trustTunnelLinkWrittenVersion))
 	payload = appendTrustTunnelField(payload, trustTunnelFieldHostname, []byte(hostname))
 	payload = appendTrustTunnelField(payload, trustTunnelFieldUsername, []byte(options.Username))
 	payload = appendTrustTunnelField(payload, trustTunnelFieldPassword, []byte(options.Password))

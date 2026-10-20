@@ -170,7 +170,7 @@ func TestParseTrustTunnelLinkRefusals(t *testing.T) {
 }
 
 // A node the link describes in full comes back as the very link TrustTunnel's
-// encoder writes.
+// encoder writes, but for the format version: its links are version 2, these 1.
 func TestGenerateTrustTunnelLinkMatchesTheReferenceEncoder(t *testing.T) {
 	for _, link := range []string{trustTunnelMinimalLink, trustTunnelCertLink} {
 		outbound, err := ParseSubscriptionLink(link)
@@ -181,8 +181,9 @@ func TestGenerateTrustTunnelLinkMatchesTheReferenceEncoder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if generated != link {
-			t.Fatalf("generated\n%s\nwant\n%s", generated, link)
+		want := "tt://?AAEB" + strings.TrimPrefix(link, "tt://?AAEC")
+		if generated != want {
+			t.Fatalf("generated\n%s\nwant\n%s", generated, want)
 		}
 	}
 }
