@@ -100,6 +100,7 @@ type tlsSettings struct {
 	ALPN          subscription.StringList `json:"alpn"`
 	AllowInsecure subscription.Bool       `json:"allowInsecure"`
 	Fingerprint   string                  `json:"fingerprint"`
+	ECHConfigList string                  `json:"echConfigList"`
 	PublicKey     string                  `json:"publicKey"`
 	Password      string                  `json:"password"`
 	ShortID       string                  `json:"shortId"`

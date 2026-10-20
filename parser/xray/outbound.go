@@ -443,10 +443,14 @@ func parseTLS(stream streamSettings) (*option.OutboundTLSOptions, error) {
 		ServerName: settings.ServerName,
 		Insecure:   settings.AllowInsecure.Value(),
 		ALPN:       badoption.Listable[string](settings.ALPN),
+		ECH:        subscription.ECH(settings.ECHConfigList),
 	}
-	if settings.Fingerprint != "" {
-		tls.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: settings.Fingerprint}
+	// Xray-core imitates Chrome when a document names no fingerprint.
+	utls, err := subscription.UTLSFingerprint(settings.Fingerprint, "chrome", security == "reality")
+	if err != nil {
+		return nil, err
 	}
+	tls.UTLS = utls
 	if security == "reality" {
 		publicKey, err := uniqueString("Reality public key aliases", settings.PublicKey, settings.Password)
 		if err != nil {
@@ -456,11 +460,6 @@ func parseTLS(stream streamSettings) (*option.OutboundTLSOptions, error) {
 			Enabled:   true,
 			PublicKey: publicKey,
 			ShortID:   settings.ShortID,
-		}
-		if tls.UTLS == nil {
-			// Reality only passes for the site it borrows when the hello is a
-			// browser's, and Xray always sends one.
-			tls.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: "chrome"}
 		}
 	}
 	return tls, nil

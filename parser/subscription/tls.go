@@ -1,6 +1,8 @@
 package subscription
 
 import (
+	"encoding/base64"
+	"encoding/pem"
 	"strings"
 
 	"github.com/sagernet/sing-box/option"
@@ -67,4 +69,29 @@ func VMessSecurity(security string) string {
 	default:
 		return "auto"
 	}
+}
+
+// ECH reads the ech of a share link or the echConfigList of Xray-core: the ECH configuration list
+// in base64, or where to ask for it, a resolver or a name and a resolver joined with "+".
+// sing-box asks its own DNS for the configuration.
+func ECH(value string) *option.OutboundECHOptions {
+	// form decoding has made a space of every "+"
+	value = strings.ReplaceAll(value, " ", "+")
+	if value == "" {
+		return nil
+	}
+	if strings.Contains(value, "://") {
+		options := &option.OutboundECHOptions{Enabled: true}
+		if name, _, named := strings.Cut(value, "+"); named && !strings.Contains(name, "://") {
+			options.QueryServerName = name
+		}
+		return options
+	}
+	for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		if list, err := encoding.DecodeString(value); err == nil && len(list) > 0 {
+			block := pem.EncodeToMemory(&pem.Block{Type: "ECH CONFIGS", Bytes: list})
+			return &option.OutboundECHOptions{Enabled: true, Config: strings.Split(strings.TrimSpace(string(block)), "\n")}
+		}
+	}
+	return nil
 }

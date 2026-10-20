@@ -1,8 +1,6 @@
 package link
 
 import (
-	"encoding/base64"
-	"encoding/pem"
 	"net/url"
 	"strconv"
 	"strings"
@@ -153,7 +151,7 @@ func linkTLS(q query, serverName string, always bool) (*option.OutboundTLSOption
 		// NekoBox and husi carry the certificate to trust in the link itself
 		tls.Certificate = strings.Split(strings.ReplaceAll(certificate, "\r\n", "\n"), "\n")
 	}
-	tls.ECH = linkECH(q.get("ech"))
+	tls.ECH = subscription.ECH(q.get("ech"))
 	reality := security == "reality" || q.get("pbk") != ""
 	// Xray-core imitates Chrome when a link names no fingerprint.
 	utls, err := subscription.UTLSFingerprint(q.get("fp", "client-fingerprint"), "chrome", reality)
@@ -169,29 +167,4 @@ func linkTLS(q query, serverName string, always bool) (*option.OutboundTLSOption
 		}
 	}
 	return tls, nil
-}
-
-// linkECH reads the "ech" of a link as Xray-core does: the ECH configuration list in base64, or
-// where to ask for it, a resolver or a name and a resolver joined with "+". sing-box asks its own
-// DNS for the configuration.
-func linkECH(value string) *option.OutboundECHOptions {
-	// form decoding has made a space of every "+"
-	value = strings.ReplaceAll(value, " ", "+")
-	if value == "" {
-		return nil
-	}
-	if strings.Contains(value, "://") {
-		options := &option.OutboundECHOptions{Enabled: true}
-		if name, _, named := strings.Cut(value, "+"); named && !strings.Contains(name, "://") {
-			options.QueryServerName = name
-		}
-		return options
-	}
-	for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
-		if list, err := encoding.DecodeString(value); err == nil && len(list) > 0 {
-			block := pem.EncodeToMemory(&pem.Block{Type: "ECH CONFIGS", Bytes: list})
-			return &option.OutboundECHOptions{Enabled: true, Config: strings.Split(strings.TrimSpace(string(block)), "\n")}
-		}
-	}
-	return nil
 }

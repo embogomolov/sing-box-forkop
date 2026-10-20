@@ -233,3 +233,38 @@ func TestXrayHysteriaDropsTheClientFingerprint(t *testing.T) {
 		t.Fatalf("the rest of the TLS block was lost: %#v", options.TLS)
 	}
 }
+
+// The fingerprint is read as Xray-core reads it: Chrome when none is named, the same browser
+// for a name only Xray knows, no imitation for "unsafe" or an unknown name, except under REALITY.
+func TestXrayReadsTheFingerprintAsXrayDoes(t *testing.T) {
+	server := func(tag string, stream string) string {
+		return `{"protocol": "vless", "tag": "` + tag + `",
+			"settings": {"vnext": [{"address": "a.example.test", "port": 443, "users": [{"id": "uuid"}]}]},
+			"streamSettings": ` + stream + `}`
+	}
+	result := parse(t, `{"outbounds": [`+strings.Join([]string{
+		server("none", `{"security": "tls", "tlsSettings": {"serverName": "a.example.test"}}`),
+		server("xray-name", `{"security": "tls", "tlsSettings": {"fingerprint": "HelloChrome_131"}}`),
+		server("unsafe", `{"security": "tls", "tlsSettings": {"fingerprint": "unsafe"}}`),
+		server("unknown", `{"security": "tls", "tlsSettings": {"fingerprint": "netscape"}}`),
+		server("ech", `{"security": "tls", "tlsSettings": {"echConfigList": "cloudflare-ech.com+https://1.1.1.1/dns-query"}}`),
+		server("reality-unknown", `{"security": "reality", "realitySettings": {"publicKey": "k", "fingerprint": "netscape"}}`),
+	}, ",")+`]}`)
+	for index, want := range []string{"chrome", "chrome", "", "", "chrome"} {
+		tls := vless(t, result, index).TLS
+		if fingerprint := ""; tls.UTLS != nil {
+			fingerprint = tls.UTLS.Fingerprint
+			if fingerprint != want {
+				t.Errorf("server %d: fingerprint %q, want %q", index+1, fingerprint, want)
+			}
+		} else if want != "" {
+			t.Errorf("server %d: no fingerprint, want %q", index+1, want)
+		}
+	}
+	if ech := vless(t, result, 4).TLS.ECH; ech == nil || !ech.Enabled || ech.QueryServerName != "cloudflare-ech.com" {
+		t.Errorf("ECH %+v", ech)
+	}
+	if len(result.Outbounds) != 5 || len(result.Skipped) != 1 {
+		t.Fatalf("REALITY with a fingerprint nobody knows was taken: %d servers, skipped %v", len(result.Outbounds), result.Skipped)
+	}
+}
