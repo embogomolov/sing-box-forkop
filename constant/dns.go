@@ -28,6 +28,7 @@ const (
 	DNSTypeDHCP        = "dhcp"
 	DNSTypeMDNS        = "mdns"
 	DNSTypeTailscale   = "tailscale"
+	DNSTypeFallback    = "fallback"
 	DNSTypeOpenConnect = "openconnect"
 	DNSTypeOpenVPN     = "openvpn"
 )

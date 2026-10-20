@@ -28,14 +28,16 @@ func NewManager(registry adapter.EndpointRegistry) *Manager {
 
 func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	m.access.Lock()
-	defer m.access.Unlock()
 	if stage == adapter.StartStateInitialize {
 		m.scope = scope
 	}
 	if stage == adapter.StartStateStart {
+		m.access.Unlock()
 		return nil
 	}
-	for _, endpoint := range m.endpoints {
+	endpoints := m.endpoints
+	m.access.Unlock()
+	for _, endpoint := range endpoints {
 		name := "endpoint/" + endpoint.Type() + "[" + endpoint.Tag() + "]"
 		err := scope.Start(name, endpoint, stage)
 		if err != nil {

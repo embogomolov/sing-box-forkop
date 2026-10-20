@@ -260,6 +260,10 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 	if err != nil {
 		return nil, nil, exchangeDone, err
 	}
+	transportStack := transportStackFromContext(ctx)
+	if containsTransport(transportStack, transport.Tag()) {
+		return nil, nil, exchangeDone, E.New("DNS resolution loop detected: ", formatTransportLoop(transportStack, transport.Tag()))
+	}
 	if len(message.Question) == 0 {
 		if c.logger != nil {
 			c.logger.WarnContext(ctx, "bad question size: ", len(message.Question))
@@ -284,6 +288,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 			}))
 	message = c.prepareExchangeMessage(message, options)
 	disableCache := !isSimpleRequest || c.disableCache || options.DisableCache
+	ctx = contextWithTransportStack(ctx, append(transportStack, transport.Tag()))
 	operation := &exchangeOperation{
 		message:         message,
 		question:        question,
@@ -340,11 +345,6 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 		}
 	}
 
-	contextTransport, transportTagLoaded := adapter.DNSTransportTagFromContext(ctx)
-	if transportTagLoaded && transport.Tag() == contextTransport {
-		operation.release()
-		return nil, nil, exchangeDone, E.New("DNS query loopback in transport[", contextTransport, "]")
-	}
 	operation.ctx = adapter.ContextWithDNSTransportTag(ctx, transport.Tag())
 	if !disableCache && responseChecker != nil && c.rdrc != nil {
 		rejected := c.rdrc.LoadRDRC(transport.Tag(), question.Name, question.Qtype)
@@ -745,6 +745,17 @@ func stripDNSPadding(response *dns.Msg) {
 	}
 }
 
+type transportStackKey struct{}
+
+func contextWithTransportStack(ctx context.Context, stack []string) context.Context {
+	return context.WithValue(ctx, transportStackKey{}, stack)
+}
+
+func transportStackFromContext(ctx context.Context) []string {
+	value, _ := ctx.Value(transportStackKey{}).([]string)
+	return value
+}
+
 func (c *Client) exchangeToTransport(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg) (*dns.Msg, error) {
 	response, err := transport.Exchange(ctx, message)
 	if err == nil {
@@ -756,6 +767,15 @@ func (c *Client) exchangeToTransport(ctx context.Context, transport adapter.DNST
 		return FixedResponseStatus(message, int(rcodeError)), nil
 	}
 	return nil, err
+}
+
+func containsTransport(stack []string, tag string) bool {
+	for _, t := range stack {
+		if t == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) exchangeToTransportAsync(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, callback func(response *dns.Msg, err error)) {
@@ -772,6 +792,18 @@ func (c *Client) exchangeToTransportAsync(ctx context.Context, transport adapter
 		}
 		callback(nil, err)
 	})
+}
+
+func formatTransportLoop(stack []string, loopTag string) string {
+	result := ""
+	for i, t := range stack {
+		if i > 0 {
+			result += " -> "
+		}
+		result += t
+	}
+	result += " -> " + loopTag
+	return result
 }
 
 func MessageToAddresses(response *dns.Msg) []netip.Addr {

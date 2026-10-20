@@ -65,6 +65,10 @@ func (r *Registry) CreateOptions(outboundType string) (any, bool) {
 func (r *Registry) CreateOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) (adapter.Outbound, error) {
 	r.access.Lock()
 	defer r.access.Unlock()
+	return r.UnsafeCreateOutbound(ctx, router, logger, tag, outboundType, options)
+}
+
+func (r *Registry) UnsafeCreateOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) (adapter.Outbound, error) {
 	constructor, loaded := r.constructors[outboundType]
 	if !loaded {
 		return nil, E.New("outbound type not found: " + outboundType)

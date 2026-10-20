@@ -2,7 +2,6 @@ package adapter
 
 import (
 	"context"
-	"slices"
 	"sync"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
+	"github.com/sagernet/sing/common/x/list"
 )
 
 type SimpleLifecycle interface {
@@ -63,8 +63,13 @@ type Scope struct {
 	cancel   context.CancelFunc
 	logger   log.ContextLogger
 	access   sync.Mutex
-	cleanups []func() error
-	children map[Lifecycle]*Scope
+	cleanups list.List[func() error]
+	children map[Lifecycle]*scopeChild
+}
+
+type scopeChild struct {
+	scope   *Scope
+	cleanup *list.Element[func() error]
 }
 
 func NewScope(ctx context.Context, logger log.ContextLogger) *Scope {
@@ -73,7 +78,7 @@ func NewScope(ctx context.Context, logger log.ContextLogger) *Scope {
 		ctx:      ctx,
 		cancel:   cancel,
 		logger:   logger,
-		children: make(map[Lifecycle]*Scope),
+		children: make(map[Lifecycle]*scopeChild),
 	}
 }
 
@@ -83,7 +88,7 @@ func (s *Scope) Context() context.Context {
 
 func (s *Scope) Add(cleanup func() error) {
 	s.access.Lock()
-	s.cleanups = append(s.cleanups, cleanup)
+	s.cleanups.PushBack(cleanup)
 	s.access.Unlock()
 }
 
@@ -96,13 +101,13 @@ func (s *Scope) Start(name string, component Lifecycle, stage StartStage) error 
 	}
 	child, loaded := s.children[component]
 	if !loaded {
-		child = NewScope(s.ctx, s.logger)
-		s.children[component] = child
-		s.cleanups = append(s.cleanups, func() error {
+		childScope := NewScope(s.ctx, s.logger)
+		child = &scopeChild{scope: childScope}
+		child.cleanup = s.cleanups.PushBack(func() error {
 			done := LogElapsed(s.logger, "close ", name)
 			monitor := taskmonitor.New(s.logger, C.StopTimeout)
 			monitor.Start("close ", name)
-			closeErr := child.Close()
+			closeErr := childScope.Close()
 			monitor.Finish()
 			done()
 			if closeErr != nil {
@@ -110,12 +115,13 @@ func (s *Scope) Start(name string, component Lifecycle, stage StartStage) error 
 			}
 			return nil
 		})
+		s.children[component] = child
 	}
 	s.access.Unlock()
 	done := LogElapsed(s.logger, stage, " ", name)
 	monitor := taskmonitor.New(s.logger, C.StartTimeout)
 	monitor.Start(stage, " ", name)
-	err = component.Start(stage, child)
+	err = component.Start(stage, child.scope)
 	monitor.Finish()
 	done()
 	if err != nil {
@@ -124,15 +130,31 @@ func (s *Scope) Start(name string, component Lifecycle, stage StartStage) error 
 	return nil
 }
 
+func (s *Scope) Remove(component Lifecycle) error {
+	s.access.Lock()
+	child, loaded := s.children[component]
+	if !loaded {
+		s.access.Unlock()
+		return nil
+	}
+	delete(s.children, component)
+	cleanup := s.cleanups.Remove(child.cleanup)
+	s.access.Unlock()
+	return cleanup()
+}
+
 func (s *Scope) Close() error {
 	s.access.Lock()
 	s.cancel()
-	cleanups := s.cleanups
-	s.cleanups = nil
+	var cleanups []func() error
+	for element := s.cleanups.Back(); element != nil; element = element.Prev() {
+		cleanups = append(cleanups, element.Value)
+	}
+	s.cleanups.Init()
 	s.children = nil
 	s.access.Unlock()
 	var err error
-	for _, cleanup := range slices.Backward(cleanups) {
+	for _, cleanup := range cleanups {
 		err = E.Errors(err, cleanup())
 	}
 	return err

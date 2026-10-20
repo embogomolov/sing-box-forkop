@@ -15,12 +15,16 @@ const (
 	TypeSnell              = "snell"
 	TypeVMess              = "vmess"
 	TypeTrojan             = "trojan"
+	TypeTrustTunnel        = "trusttunnel"
 	TypeNaive              = "naive"
 	TypeWireGuard          = "wireguard"
+	TypeWARP               = "warp"
+	TypeParser             = "parser"
 	TypeHysteria           = "hysteria"
 	TypeTor                = "tor"
 	TypeSSH                = "ssh"
 	TypeShadowTLS          = "shadowtls"
+	TypeMieru              = "mieru"
 	TypeAnyTLS             = "anytls"
 	TypeShadowsocksR       = "shadowsocksr"
 	TypeVLESS              = "vless"
@@ -46,6 +50,7 @@ const (
 )
 
 const (
+	TypeFallback = "fallback"
 	TypeSelector = "selector"
 	TypeURLTest  = "urltest"
 )
@@ -80,10 +85,16 @@ func ProxyDisplayName(proxyType string) string {
 		return "VMess"
 	case TypeTrojan:
 		return "Trojan"
+	case TypeTrustTunnel:
+		return "TrustTunnel"
 	case TypeNaive:
 		return "Naive"
 	case TypeWireGuard:
 		return "WireGuard"
+	case TypeWARP:
+		return "WARP"
+	case TypeParser:
+		return "Parser"
 	case TypeHysteria:
 		return "Hysteria"
 	case TypeTor:
@@ -100,8 +111,12 @@ func ProxyDisplayName(proxyType string) string {
 		return "TUIC"
 	case TypeHysteria2:
 		return "Hysteria2"
+	case TypeMieru:
+		return "Mieru"
 	case TypeAnyTLS:
 		return "AnyTLS"
+	case TypeFallback:
+		return "Fallback"
 	case TypeOpenConnect:
 		return "OpenConnect"
 	case TypeOpenVPNClient:

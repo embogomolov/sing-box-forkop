@@ -10,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box/common/process"
 	"github.com/sagernet/sing-box/common/taskmonitor"
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/experimental/clashmode"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	R "github.com/sagernet/sing-box/route/rule"
@@ -33,8 +34,11 @@ type Router struct {
 	dnsTransport      adapter.DNSTransportManager
 	connection        adapter.ConnectionManager
 	network           adapter.NetworkManager
+	defaultOutbound   adapter.Outbound
 	httpClientManager adapter.HTTPClientManager
 	rules             []adapter.Rule
+	ruleOptions       []option.Rule
+	final             string
 	needFindProcess   bool
 	needFindNeighbor  bool
 	leaseFiles        []string
@@ -47,6 +51,7 @@ type Router struct {
 	pauseManager      pause.Manager
 	trackers          []adapter.ConnectionTracker
 	platformInterface adapter.PlatformInterface
+	started           chan struct{}
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
@@ -61,12 +66,15 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		network:           service.FromContext[adapter.NetworkManager](ctx),
 		httpClientManager: service.FromContext[adapter.HTTPClientManager](ctx),
 		rules:             make([]adapter.Rule, 0, len(options.Rules)),
+		ruleOptions:       options.Rules,
+		final:             options.Final,
 		ruleSetMap:        make(map[string]adapter.RuleSet),
 		needFindProcess:   hasRule(options.Rules, isProcessRule) || hasDNSRule(dnsOptions.Rules, isProcessDNSRule) || options.FindProcess,
 		needFindNeighbor:  hasRule(options.Rules, isNeighborRule) || hasDNSRule(dnsOptions.Rules, isNeighborDNSRule) || hasLocalNeighborDNSServer(dnsOptions.Servers) || options.FindNeighbor,
 		leaseFiles:        options.DHCPLeaseFiles,
 		pauseManager:      service.FromContext[pause.Manager](ctx),
 		platformInterface: service.FromContext[adapter.PlatformInterface](ctx),
+		started:           make(chan struct{}),
 	}
 }
 
@@ -217,6 +225,16 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		if r.ruleSetUpdater != nil {
 			r.ruleSetUpdater.Start()
 		}
+		if r.final != "" {
+			defaultOutbound, loaded := r.outbound.Outbound(r.final)
+			if !loaded {
+				return E.New("outbound not found: ", r.final)
+			}
+			r.defaultOutbound = defaultOutbound
+		} else {
+			r.defaultOutbound = r.outbound.Default()
+		}
+		close(r.started)
 		return nil
 	case adapter.StartStateStarted:
 		for _, ruleSet := range r.ruleSets {
@@ -225,6 +243,19 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		runtime.GC()
 	}
 	return nil
+}
+
+func (r *Router) References() []string {
+	var mode string
+	clashMode := service.PtrFromContext[clashmode.Manager](r.ctx)
+	if clashMode != nil {
+		mode = clashMode.Mode()
+	}
+	var references, transports []string
+	if !collectRuleReferences(r.ruleOptions, mode, &references, &transports) {
+		references = append(references, r.final)
+	}
+	return references
 }
 
 func (r *Router) RuleSet(tag string) (adapter.RuleSet, bool) {

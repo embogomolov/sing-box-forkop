@@ -19,8 +19,12 @@ type Manager struct {
 	endpoint                adapter.EndpointManager
 	defaultTag              string
 	access                  sync.RWMutex
+	startAccess             sync.Mutex
+	scope                   *adapter.Scope
+	stage                   adapter.StartStage
 	outbounds               []adapter.Outbound
 	outboundByTag           map[string]adapter.Outbound
+	dependByTag             map[string][]string
 	defaultOutbound         adapter.Outbound
 	defaultOutboundFallback func() (adapter.Outbound, error)
 }
@@ -31,6 +35,7 @@ func NewManager(registry adapter.OutboundRegistry, endpoint adapter.EndpointMana
 		endpoint:      endpoint,
 		defaultTag:    defaultTag,
 		outboundByTag: make(map[string]adapter.Outbound),
+		dependByTag:   make(map[string][]string),
 	}
 }
 
@@ -39,7 +44,11 @@ func (m *Manager) Initialize(defaultOutboundFallback func() (adapter.Outbound, e
 }
 
 func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	m.startAccess.Lock()
+	defer m.startAccess.Unlock()
 	m.access.Lock()
+	m.scope = scope
+	m.stage = stage
 	if stage == adapter.StartStateInitialize {
 		if m.defaultTag != "" && m.defaultOutbound == nil {
 			defaultEndpoint, loaded := m.endpoint.Get(m.defaultTag)
@@ -166,6 +175,41 @@ func (m *Manager) Default() adapter.Outbound {
 	return m.defaultOutbound
 }
 
+func (m *Manager) Remove(tag string) error {
+	m.startAccess.Lock()
+	defer m.startAccess.Unlock()
+	m.access.Lock()
+	outbound, found := m.outboundByTag[tag]
+	if !found {
+		m.access.Unlock()
+		return os.ErrInvalid
+	}
+	dependBy := m.dependByTag[tag]
+	if len(dependBy) > 0 {
+		m.access.Unlock()
+		return E.New("outbound[", tag, "] is depended by ", strings.Join(dependBy, ", "))
+	}
+	delete(m.outboundByTag, tag)
+	m.outbounds = common.Filter(m.outbounds, func(it adapter.Outbound) bool {
+		return it != outbound
+	})
+	m.removeDependencies(outbound)
+	if m.defaultOutbound == outbound {
+		if len(m.outbounds) > 0 {
+			m.defaultOutbound = m.outbounds[0]
+		} else {
+			m.defaultOutbound = nil
+		}
+	}
+	scope := m.scope
+	m.access.Unlock()
+	lifecycle, isLifecycle := outbound.(adapter.Lifecycle)
+	if scope == nil || !isLifecycle {
+		return nil
+	}
+	return scope.Remove(lifecycle)
+}
+
 func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, inboundType string, options any) error {
 	if tag == "" {
 		return os.ErrInvalid
@@ -174,16 +218,63 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	if err != nil {
 		return err
 	}
+	m.startAccess.Lock()
+	defer m.startAccess.Unlock()
+	m.access.RLock()
+	scope := m.scope
+	stage := m.stage
+	m.access.RUnlock()
+	lifecycle, isLifecycle := outbound.(adapter.Lifecycle)
+	if scope != nil && isLifecycle {
+		name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
+		for _, startStage := range adapter.ListStartStages[:stage+1] {
+			err = scope.Start(name, lifecycle, startStage)
+			if err != nil {
+				return E.Errors(err, scope.Remove(lifecycle))
+			}
+		}
+	}
 	m.access.Lock()
-	defer m.access.Unlock()
-	_, loaded := m.outboundByTag[tag]
+	existsOutbound, loaded := m.outboundByTag[tag]
 	if loaded {
-		return E.New("duplicate outbound tag: ", tag)
+		m.outbounds = common.Filter(m.outbounds, func(it adapter.Outbound) bool {
+			return it != existsOutbound
+		})
+		m.removeDependencies(existsOutbound)
 	}
 	m.outbounds = append(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound
-	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
+	for _, dependency := range outbound.Dependencies() {
+		m.dependByTag[dependency] = append(m.dependByTag[dependency], tag)
+	}
+	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) || (loaded && m.defaultOutbound == existsOutbound) {
 		m.defaultOutbound = outbound
 	}
+	m.access.Unlock()
+	if !loaded || scope == nil {
+		return nil
+	}
+	existsLifecycle, isExistsLifecycle := existsOutbound.(adapter.Lifecycle)
+	if !isExistsLifecycle {
+		return nil
+	}
+	err = scope.Remove(existsLifecycle)
+	if err != nil {
+		return E.Cause(err, "close outbound/", existsOutbound.Type(), "[", existsOutbound.Tag(), "]")
+	}
 	return nil
+}
+
+func (m *Manager) removeDependencies(outbound adapter.Outbound) {
+	tag := outbound.Tag()
+	for _, dependency := range outbound.Dependencies() {
+		dependBy := common.Filter(m.dependByTag[dependency], func(it string) bool {
+			return it != tag
+		})
+		if len(dependBy) == 0 {
+			delete(m.dependByTag, dependency)
+		} else {
+			m.dependByTag[dependency] = dependBy
+		}
+	}
 }
