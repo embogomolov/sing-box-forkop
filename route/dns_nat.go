@@ -51,22 +51,27 @@ var dnsNatHandoff = 20 * time.Millisecond
 // what reaches the queue shortly after: a packet that came right behind it, which udpnat
 // has found without a handler and not queued yet.
 //
-// After a sniff action the session is handed over as sing-box does it: the sniff has
-// read the opening packet, and a wait for a second one would cost every query a timer
-// and a wake-up of its own (some 20 us of CPU where it was measured), while a resolver
-// such as dnsmasq sends each query from a port of its own. A second packet that comes
-// from the same port while the handler is being set can stay in the queue there.
+// After a sniff, which read the opening packet, the queue is read the same way: the A and AAAA
+// queries of a lookup come from one port, the second while the handler is being set.
 func setDNSNatHandler(conn udpnat.Conn, handler N.UDPHandlerEx, first bool) {
-	if !first {
-		conn.SetHandler(handler)
-		return
+	var (
+		buffer      *buf.Buffer
+		destination M.Socksaddr
+	)
+	if first {
+		buffer, destination = readDNSNatPacket(conn, C.DNSTimeout)
 	}
-	buffer, destination := readDNSNatPacket(conn, C.DNSTimeout)
 	// The handler is set before it gets the packet, as SetHandler does with what it takes
 	// from the queue: udpnat reads the handler of a session without a lock when it closes
 	// the session, and what is started here after SetHandler (the exchange) is what
 	// orders that read after it.
 	conn.SetHandler(handler)
+	if first && buffer == nil {
+		return
+	}
+	if buffer == nil {
+		buffer, destination = readDNSNatPacket(conn, dnsNatHandoff)
+	}
 	for buffer != nil {
 		handler.NewPacketEx(buffer, destination)
 		buffer, destination = readDNSNatPacket(conn, dnsNatHandoff)

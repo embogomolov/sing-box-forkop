@@ -234,6 +234,16 @@ func TestHijackDNSNatTakesWhatWasQueuedMeanwhile(t *testing.T) {
 	conn.answered(t, "first.test.", "second.test.")
 }
 
+// The A and AAAA queries of a lookup come from one port: behind the packet a sniff action
+// has read, a second one that udpnat was still queuing while the handler was set is read
+// from the queue too.
+func TestHijackDNSNatTakesWhatWasQueuedMeanwhileAfterASniff(t *testing.T) {
+	conn := newQueuedNatConn()
+	conn.meanwhile = dnsQuery(t, "second.test.")
+	hijack(t, conn, dnsQuery(t, "first.test."))
+	conn.answered(t, "first.test.", "second.test.")
+}
+
 // A session that is closed while its first packet is waited for is left at once, with
 // its handler set; a packet it already had is still answered.
 func TestHijackDNSNatOfAClosedSession(t *testing.T) {
