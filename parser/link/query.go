@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/parser/subscription"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 )
@@ -113,19 +114,18 @@ func linkTLS(q query, serverName string, always bool) (*option.OutboundTLSOption
 	if alpn := q.list("alpn"); len(alpn) != 0 {
 		tls.ALPN = badoption.Listable[string](alpn)
 	}
-	if fingerprint := q.get("fp", "client-fingerprint"); fingerprint != "" {
-		tls.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: fingerprint}
+	reality := security == "reality" || q.get("pbk") != ""
+	// Xray-core imitates Chrome when a link names no fingerprint.
+	utls, err := subscription.UTLSFingerprint(q.get("fp", "client-fingerprint"), "chrome", reality)
+	if err != nil {
+		return nil, err
 	}
-	if security == "reality" || q.get("pbk") != "" {
+	tls.UTLS = utls
+	if reality {
 		tls.Reality = &option.OutboundRealityOptions{
 			Enabled:   true,
 			PublicKey: q.get("pbk", "public-key"),
 			ShortID:   q.get("sid", "short-id"),
-		}
-		if tls.UTLS == nil {
-			// Reality only passes for the site it borrows when the hello is a
-			// browser's, and every client that writes such a link sends one.
-			tls.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: "chrome"}
 		}
 	}
 	return tls, nil

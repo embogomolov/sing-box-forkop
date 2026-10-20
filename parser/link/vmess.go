@@ -64,7 +64,14 @@ func parseVMessLink(link string) (option.Outbound, error) {
 	if payload.Port == 0 {
 		return option.Outbound{}, E.New("missing server port")
 	}
-	transport, err := vmessTransport(payload)
+	if payload.TLS == "reality" {
+		return option.Outbound{}, E.New("unsupported security: reality")
+	}
+	tls, err := vmessTLS(payload)
+	if err != nil {
+		return option.Outbound{}, err
+	}
+	transport, err := vmessTransport(payload, tls)
 	if err != nil {
 		return option.Outbound{}, err
 	}
@@ -72,17 +79,14 @@ func parseVMessLink(link string) (option.Outbound, error) {
 	if err != nil {
 		return option.Outbound{}, err
 	}
-	security := payload.Security
-	if security == "" {
-		security = "auto"
-	}
 	options := &option.VMessOutboundOptions{
-		ServerOptions: option.ServerOptions{Server: string(payload.Add), ServerPort: uint16(payload.Port)},
-		UUID:          string(payload.ID),
-		Security:      string(security),
-		AlterId:       alterID,
-		Transport:     transport,
-		DialerOptions: option.DialerOptions{AbstractDialerOptions: option.AbstractDialerOptions{TCPFastOpen: payload.TCPFastOpen.Value()}},
+		ServerOptions:               option.ServerOptions{Server: string(payload.Add), ServerPort: uint16(payload.Port)},
+		UUID:                        string(payload.ID),
+		Security:                    subscription.VMessSecurity(string(payload.Security)),
+		AlterId:                     alterID,
+		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: tls},
+		Transport:                   transport,
+		DialerOptions:               option.DialerOptions{AbstractDialerOptions: option.AbstractDialerOptions{TCPFastOpen: payload.TCPFastOpen.Value()}},
 	}
 	switch {
 	case payload.PacketEncoding != "":
@@ -91,29 +95,6 @@ func parseVMessLink(link string) (option.Outbound, error) {
 		options.PacketEncoding = string(payload.PacketEncodingCaml)
 	case payload.XUDP.Value():
 		options.PacketEncoding = "xudp"
-	}
-	if payload.TLS == "reality" {
-		return option.Outbound{}, E.New("unsupported security: reality")
-	}
-	// h2 exists only over TLS, so a link that selects it means TLS whether it
-	// says so or not.
-	tlsEnabled := payload.TLS == "tls" || payload.TLS == "1" || payload.TLS == "true" || payload.Network == "h2"
-	if tlsEnabled {
-		tls := &option.OutboundTLSOptions{
-			Enabled:    true,
-			ServerName: string(payload.Add),
-			Insecure:   payload.Insecure.Value() || payload.AllowInsecure.Value() || payload.SkipCertVerify.Value(),
-			ALPN:       badoption.Listable[string](payload.ALPN),
-		}
-		if payload.SNI != "" {
-			tls.ServerName = string(payload.SNI)
-		} else if payload.Host != "" && payload.Network == "ws" {
-			tls.ServerName = string(payload.Host)
-		}
-		if payload.Fingerprint != "" {
-			tls.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: string(payload.Fingerprint)}
-		}
-		options.TLS = tls
 	}
 	return option.Outbound{
 		Type:    C.TypeVMess,
@@ -139,11 +120,11 @@ func parseVMessURL(link string) (option.Outbound, error) {
 		return option.Outbound{}, err
 	}
 	q := linkQuery(linkURL)
-	transport, err := linkTransport(q)
+	tls, err := linkTLS(q, server, false)
 	if err != nil {
 		return option.Outbound{}, err
 	}
-	tls, err := linkTLS(q, server, false)
+	transport, err := linkTransport(q, tls)
 	if err != nil {
 		return option.Outbound{}, err
 	}
@@ -157,10 +138,7 @@ func parseVMessURL(link string) (option.Outbound, error) {
 	if err != nil {
 		return option.Outbound{}, err
 	}
-	security := q.get("encryption", "scy")
-	if security == "" {
-		security = "auto"
-	}
+	security := subscription.VMessSecurity(q.get("encryption", "scy"))
 	return option.Outbound{
 		Type: C.TypeVMess,
 		Tag:  linkURL.Fragment,
@@ -177,29 +155,58 @@ func parseVMessURL(link string) (option.Outbound, error) {
 	}, nil
 }
 
-func vmessTransport(payload vmessPayload) (*option.V2RayTransportOptions, error) {
+func vmessTLS(payload vmessPayload) (*option.OutboundTLSOptions, error) {
+	// h2 exists only over TLS, so a link that selects it means TLS whether it
+	// says so or not.
+	if !(payload.TLS == "tls" || payload.TLS == "1" || payload.TLS == "true" || payload.Network == "h2") {
+		return nil, nil
+	}
+	tls := &option.OutboundTLSOptions{
+		Enabled:    true,
+		ServerName: string(payload.Add),
+		Insecure:   payload.Insecure.Value() || payload.AllowInsecure.Value() || payload.SkipCertVerify.Value(),
+		ALPN:       badoption.Listable[string](payload.ALPN),
+	}
+	if payload.SNI != "" {
+		tls.ServerName = string(payload.SNI)
+	} else if payload.Host != "" && payload.Network == "ws" {
+		tls.ServerName = string(payload.Host)
+	}
+	// Xray-core imitates Chrome when a link names no fingerprint.
+	utls, err := subscription.UTLSFingerprint(string(payload.Fingerprint), "chrome", false)
+	if err != nil {
+		return nil, err
+	}
+	tls.UTLS = utls
+	return tls, nil
+}
+
+func vmessTransport(payload vmessPayload, tls *option.OutboundTLSOptions) (*option.V2RayTransportOptions, error) {
 	switch string(payload.Network) {
 	case "", "tcp", "raw":
-		if header := string(payload.HeaderType); header != "" && header != "none" {
-			return nil, E.New("unsupported TCP header: ", header)
+		var hosts []string
+		if payload.Host != "" {
+			hosts = strings.Split(string(payload.Host), ",")
 		}
-		return nil, nil
+		return tcpHeaderTransport(string(payload.HeaderType), hosts, string(payload.Path), tls)
 	case "ws", "websocket":
 		path, earlyData := subscription.SplitWebsocketEarlyData(string(payload.Path))
 		options := option.V2RayWebsocketOptions{Path: path}
-		if payload.Host != "" {
-			options.Headers = badoption.HTTPHeader{"Host": []string{string(payload.Host)}}
+		if host := websocketHost(string(payload.Host), tls); host != "" {
+			options.Headers = badoption.HTTPHeader{"Host": []string{host}}
 		}
 		if earlyData > 0 {
 			options.MaxEarlyData = earlyData
 			options.EarlyDataHeaderName = "Sec-WebSocket-Protocol"
 		}
+		ownALPN(tls)
 		return &option.V2RayTransportOptions{
 			Type:             C.V2RayTransportTypeWebsocket,
 			WebsocketOptions: options,
 		}, nil
 	case "httpupgrade":
 		path, _ := subscription.SplitWebsocketEarlyData(string(payload.Path))
+		ownALPN(tls)
 		return &option.V2RayTransportOptions{
 			Type: C.V2RayTransportTypeHTTPUpgrade,
 			HTTPUpgradeOptions: option.V2RayHTTPUpgradeOptions{
@@ -212,6 +219,7 @@ func vmessTransport(payload vmessPayload) (*option.V2RayTransportOptions, error)
 		if payload.Host != "" {
 			host = strings.Split(string(payload.Host), ",")
 		}
+		ownALPN(tls)
 		return &option.V2RayTransportOptions{
 			Type: C.V2RayTransportTypeHTTP,
 			HTTPOptions: option.V2RayHTTPOptions{
@@ -226,6 +234,7 @@ func vmessTransport(payload vmessPayload) (*option.V2RayTransportOptions, error)
 		if serviceName == "" {
 			serviceName = string(payload.Host)
 		}
+		ownALPN(tls)
 		return &option.V2RayTransportOptions{
 			Type:        C.V2RayTransportTypeGRPC,
 			GRPCOptions: option.V2RayGRPCOptions{ServiceName: serviceName},

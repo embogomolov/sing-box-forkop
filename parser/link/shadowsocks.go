@@ -30,6 +30,9 @@ func parseShadowsocksLink(link string) (option.Outbound, error) {
 	}
 	if plugin := q.get("plugin"); plugin != "" {
 		name, arguments, _ := strings.Cut(plugin, ";")
+		if pluginNamesLocalFile(arguments) {
+			return option.Outbound{}, E.New("unsupported plugin option: cert names a file of this router")
+		}
 		options.Plugin = name
 		options.PluginOptions = arguments
 	}
@@ -99,4 +102,15 @@ func shadowsocksLinkURL(body string) (*url.URL, error) {
 		return nil, E.New("missing server")
 	}
 	return linkURL, nil
+}
+
+// v2ray-plugin reads a certificate from the file of this router that cert= names.
+func pluginNamesLocalFile(arguments string) bool {
+	for _, argument := range strings.Split(arguments, ";") {
+		key, _, _ := strings.Cut(argument, "=")
+		if strings.EqualFold(strings.TrimSpace(key), "cert") {
+			return true
+		}
+	}
+	return false
 }

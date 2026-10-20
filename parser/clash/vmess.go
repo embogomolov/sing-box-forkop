@@ -41,10 +41,7 @@ func (v *vmessOptions) Build() (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	security := v.Cipher
-	if security == "" {
-		security = "auto"
-	}
+	security := subscription.VMessSecurity(v.Cipher)
 	packetEncoding := v.PacketEncoding
 	switch packetEncoding {
 	case "":

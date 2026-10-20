@@ -14,6 +14,7 @@ import (
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/parser/subscription"
 	"github.com/sagernet/sing-box/parser/xhttp"
 	"github.com/sagernet/sing/common/byteformats"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -82,6 +83,7 @@ func generateAnyTLSLink(outbound option.Outbound) (string, error) {
 	}
 	query := u.Query()
 	addTLSQuery(query, options.TLS, false)
+	addXrayClientTLSQuery(query, options.TLS, nil)
 	addTCPFastOpenQuery(query, options.DialerOptions)
 	u.RawQuery = query.Encode()
 	return u.String(), nil
@@ -212,6 +214,7 @@ func generateVLESSLink(outbound option.Outbound) (string, error) {
 	if err = addV2RayTransportQuery(query, options.Transport); err != nil {
 		return "", err
 	}
+	addXrayClientTLSQuery(query, options.TLS, options.Transport)
 	addTCPFastOpenQuery(query, options.DialerOptions)
 	if options.Encryption != "" && options.Encryption != "none" {
 		query.Set("encryption", options.Encryption)
@@ -243,6 +246,7 @@ func generateTrojanLink(outbound option.Outbound) (string, error) {
 	if err = addV2RayTransportQuery(query, options.Transport); err != nil {
 		return "", err
 	}
+	addXrayClientTLSQuery(query, options.TLS, options.Transport)
 	addTCPFastOpenQuery(query, options.DialerOptions)
 	u.RawQuery = query.Encode()
 	return u.String(), nil
@@ -426,11 +430,8 @@ func generateVMessLink(outbound option.Outbound) (string, error) {
 	}
 	payload := map[string]string{
 		"v": "2", "ps": outbound.Tag, "add": options.Server, "port": strconv.Itoa(int(options.ServerPort)),
-		"id": options.UUID, "aid": strconv.Itoa(options.AlterId), "scy": options.Security,
+		"id": options.UUID, "aid": strconv.Itoa(options.AlterId), "scy": subscription.VMessSecurity(options.Security),
 		"net": "tcp", "type": "none", "host": "", "path": "", "tls": "", "sni": "",
-	}
-	if payload["scy"] == "" {
-		payload["scy"] = "auto"
 	}
 	if options.PacketEncoding != "" {
 		payload["packet_encoding"] = options.PacketEncoding
@@ -441,8 +442,11 @@ func generateVMessLink(outbound option.Outbound) (string, error) {
 	if options.TLS != nil && options.TLS.Enabled {
 		payload["tls"] = "tls"
 		payload["sni"] = options.TLS.ServerName
-		payload["alpn"] = strings.Join(options.TLS.ALPN, ",")
-		if options.TLS.UTLS != nil && options.TLS.UTLS.Enabled {
+		if !xrayTransportOwnsALPN(options.Transport) {
+			payload["alpn"] = strings.Join(options.TLS.ALPN, ",")
+		}
+		payload["fp"] = "chrome"
+		if options.TLS.UTLS != nil && options.TLS.UTLS.Enabled && options.TLS.UTLS.Fingerprint != "" {
 			payload["fp"] = options.TLS.UTLS.Fingerprint
 		}
 		if options.TLS.Insecure {
@@ -495,9 +499,8 @@ func canonicalizeShareLinkValue(value map[string]any) {
 			value["version"] = "5"
 		}
 	case C.TypeVMess:
-		if value["security"] == nil || value["security"] == "" {
-			value["security"] = "auto"
-		}
+		security, _ := value["security"].(string)
+		value["security"] = subscription.VMessSecurity(security)
 	case C.TypeVLESS:
 		if value["encryption"] == "none" {
 			delete(value, "encryption")
@@ -511,12 +514,37 @@ func canonicalizeShareLinkValue(value map[string]any) {
 	if tls == nil {
 		return
 	}
-	if tls["server_name"] == value["server"] {
-		delete(tls, "server_name")
+	switch value["type"] {
+	case C.TypeVLESS, C.TypeVMess, C.TypeTrojan, C.TypeAnyTLS:
+		if tls["utls"] == nil {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": "chrome"}
+		}
+	}
+	serverName, _ := tls["server_name"].(string)
+	if serverName == "" {
+		serverName, _ = value["server"].(string)
 	}
 	transport, _ := value["transport"].(map[string]any)
-	if transport != nil && transport["type"] == C.V2RayTransportTypeXHTTP && reflect.DeepEqual(tls["alpn"], []any{"h2", "http/1.1"}) {
+	switch transportType, _ := transport["type"].(string); transportType {
+	case C.V2RayTransportTypeWebsocket:
+		headers, _ := transport["headers"].(map[string]any)
+		if headers == nil {
+			headers = make(map[string]any)
+			transport["headers"] = headers
+		}
+		if headers["Host"] == nil {
+			headers["Host"] = serverName
+		}
 		delete(tls, "alpn")
+	case C.V2RayTransportTypeHTTPUpgrade, C.V2RayTransportTypeGRPC, C.V2RayTransportTypeHTTP:
+		delete(tls, "alpn")
+	case C.V2RayTransportTypeXHTTP:
+		if reflect.DeepEqual(tls["alpn"], []any{"h2", "http/1.1"}) {
+			delete(tls, "alpn")
+		}
+	}
+	if tls["server_name"] == value["server"] {
+		delete(tls, "server_name")
 	}
 }
 
@@ -662,6 +690,32 @@ func addVMessTransport(payload map[string]string, transport *option.V2RayTranspo
 		return E.New("unsupported VMess transport: ", transport.Type)
 	}
 	return nil
+}
+
+// addXrayClientTLSQuery writes what the client of Xray-core takes anyway, so that the link reads
+// back as the outbound it was made from.
+func addXrayClientTLSQuery(query url.Values, tls *option.OutboundTLSOptions, transport *option.V2RayTransportOptions) {
+	if tls == nil || !tls.Enabled {
+		return
+	}
+	if query.Get("fp") == "" {
+		query.Set("fp", "chrome")
+	}
+	if xrayTransportOwnsALPN(transport) {
+		query.Del("alpn")
+	}
+}
+
+func xrayTransportOwnsALPN(transport *option.V2RayTransportOptions) bool {
+	if transport == nil {
+		return false
+	}
+	switch transport.Type {
+	case C.V2RayTransportTypeWebsocket, C.V2RayTransportTypeHTTPUpgrade, C.V2RayTransportTypeGRPC, C.V2RayTransportTypeHTTP:
+		return true
+	default:
+		return false
+	}
 }
 
 func addTLSQuery(query url.Values, tls *option.OutboundTLSOptions, includeSecurity bool) {

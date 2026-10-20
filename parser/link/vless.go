@@ -30,11 +30,11 @@ func parseVLESSLink(link string) (option.Outbound, error) {
 	if err = subscription.CheckVLESSFlow(flow); err != nil {
 		return option.Outbound{}, err
 	}
-	transport, err := linkTransport(q)
+	tls, err := linkTLS(q, server, false)
 	if err != nil {
 		return option.Outbound{}, err
 	}
-	tls, err := linkTLS(q, server, false)
+	transport, err := linkTransport(q, tls)
 	if err != nil {
 		return option.Outbound{}, err
 	}

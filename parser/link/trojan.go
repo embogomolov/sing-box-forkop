@@ -2,6 +2,7 @@ package link
 
 import (
 	"net/url"
+	"strings"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -25,11 +26,14 @@ func parseTrojanLink(link string) (option.Outbound, error) {
 		return option.Outbound{}, err
 	}
 	q := linkQuery(linkURL)
-	transport, err := linkTransport(q)
-	if err != nil {
-		return option.Outbound{}, err
+	var tls *option.OutboundTLSOptions
+	if !strings.EqualFold(q.get("security"), "none") {
+		tls, err = linkTLS(q, server, true)
+		if err != nil {
+			return option.Outbound{}, err
+		}
 	}
-	tls, err := linkTLS(q, server, true)
+	transport, err := linkTransport(q, tls)
 	if err != nil {
 		return option.Outbound{}, err
 	}

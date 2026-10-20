@@ -2,6 +2,7 @@ package link
 
 import (
 	"strconv"
+	"strings"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -13,19 +14,14 @@ import (
 
 // linkTransport reads the transport a share link describes. The link format is
 // Xray's, so the parameter names and their meanings are Xray's too.
-func linkTransport(q query) (*option.V2RayTransportOptions, error) {
+func linkTransport(q query, tls *option.OutboundTLSOptions) (*option.V2RayTransportOptions, error) {
 	switch q.get("type", "net") {
 	case "", "tcp", "raw", "none":
-		if header := q.get("headerType"); header != "" && header != "none" {
-			// The HTTP request Xray writes in front of a raw connection is a
-			// masking layer, not an HTTP transport, and sing-box has none.
-			return nil, E.New("unsupported TCP header: ", header)
-		}
-		return nil, nil
+		return tcpHeaderTransport(q.get("headerType"), q.list("host"), q.get("path"), tls)
 	case "ws", "websocket":
 		path, earlyData := subscription.SplitWebsocketEarlyData(q.get("path"))
 		options := option.V2RayWebsocketOptions{Path: path}
-		if host := q.get("host"); host != "" {
+		if host := websocketHost(q.get("host"), tls); host != "" {
 			options.Headers = badoption.HTTPHeader{"Host": []string{host}}
 		}
 		// The length usually rides in the path, but some clients write it as a
@@ -44,12 +40,14 @@ func linkTransport(q query) (*option.V2RayTransportOptions, error) {
 				options.EarlyDataHeaderName = name
 			}
 		}
+		ownALPN(tls)
 		return &option.V2RayTransportOptions{
 			Type:             C.V2RayTransportTypeWebsocket,
 			WebsocketOptions: options,
 		}, nil
 	case "httpupgrade":
 		path, _ := subscription.SplitWebsocketEarlyData(q.get("path"))
+		ownALPN(tls)
 		return &option.V2RayTransportOptions{
 			Type: C.V2RayTransportTypeHTTPUpgrade,
 			HTTPUpgradeOptions: option.V2RayHTTPUpgradeOptions{
@@ -58,6 +56,7 @@ func linkTransport(q query) (*option.V2RayTransportOptions, error) {
 			},
 		}, nil
 	case "http", "h2", "h3":
+		ownALPN(tls)
 		return &option.V2RayTransportOptions{
 			Type: C.V2RayTransportTypeHTTP,
 			HTTPOptions: option.V2RayHTTPOptions{
@@ -66,6 +65,7 @@ func linkTransport(q query) (*option.V2RayTransportOptions, error) {
 			},
 		}, nil
 	case "grpc", "gun":
+		ownALPN(tls)
 		return &option.V2RayTransportOptions{
 			Type: C.V2RayTransportTypeGRPC,
 			GRPCOptions: option.V2RayGRPCOptions{
@@ -82,4 +82,42 @@ func linkTransport(q query) (*option.V2RayTransportOptions, error) {
 		return nil, E.New("unsupported QUIC transport")
 	}
 	return nil, E.New("unsupported transport: ", q.get("type", "net"))
+}
+
+// The HTTP header of Xray's TCP transport is the HTTP transport of sing-box without TLS; over
+// TLS that transport speaks HTTP/2.
+func tcpHeaderTransport(header string, hosts []string, path string, tls *option.OutboundTLSOptions) (*option.V2RayTransportOptions, error) {
+	switch header {
+	case "", "none":
+		return nil, nil
+	case "http":
+		if tls != nil {
+			return nil, E.New("unsupported TCP header over TLS: http")
+		}
+		// Xray takes a list of paths and asks for one of them at random.
+		path, _, _ = strings.Cut(path, ",")
+		return &option.V2RayTransportOptions{
+			Type:        C.V2RayTransportTypeHTTP,
+			HTTPOptions: option.V2RayHTTPOptions{Host: badoption.Listable[string](hosts), Path: path},
+		}, nil
+	default:
+		return nil, E.New("unsupported TCP header: ", header)
+	}
+}
+
+// Without a host in the link Xray-core asks for the server name of TLS, which a CDN routes by,
+// where sing-box would ask for the address of the server.
+func websocketHost(host string, tls *option.OutboundTLSOptions) string {
+	if host == "" && tls != nil {
+		return tls.ServerName
+	}
+	return host
+}
+
+// Xray-core asks for the ALPN of such a transport whatever the link says, as sing-box does when
+// none is set; panels write "h2,http/1.1" for every host, and HTTP/2 carries no WebSocket.
+func ownALPN(tls *option.OutboundTLSOptions) {
+	if tls != nil {
+		tls.ALPN = nil
+	}
 }

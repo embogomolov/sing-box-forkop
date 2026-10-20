@@ -402,7 +402,6 @@ func TestGenerateSubscriptionLinkRejectsUnsupportedValues(t *testing.T) {
 	for name, tls := range map[string]*option.OutboundTLSOptions{
 		"plaintext":    nil,
 		"disabled TLS": {Enabled: false},
-		"Reality":      {Enabled: true, Reality: &option.OutboundRealityOptions{Enabled: true}},
 		"ECH":          {Enabled: true, ECH: &option.OutboundECHOptions{Enabled: true}},
 	} {
 		t.Run("trojan "+name, func(t *testing.T) {
@@ -467,12 +466,12 @@ func TestGenerateSubscriptionLinkRejectsUnsupportedValues(t *testing.T) {
 
 func TestParseLinkRefusesWhatItCannotDial(t *testing.T) {
 	for name, link := range map[string]string{
-		"no port":               "vless://00000000-0000-4000-8000-000000000001@vless.example#node",
-		"port zero":             "vless://00000000-0000-4000-8000-000000000001@vless.example:0#node",
-		"unreadable port":       "trojan://secret@trojan.example:https#node",
-		"an unsupported flow":   "vless://00000000-0000-4000-8000-000000000001@vless.example:443?flow=xtls-rprx-direct#node",
-		"a masked raw stream":   "vless://00000000-0000-4000-8000-000000000001@vless.example:443?type=tcp&headerType=http#node",
-		"an unsupported scheme": "juicity://secret@juicity.example:443#node",
+		"no port":                "vless://00000000-0000-4000-8000-000000000001@vless.example#node",
+		"port zero":              "vless://00000000-0000-4000-8000-000000000001@vless.example:0#node",
+		"unreadable port":        "trojan://secret@trojan.example:https#node",
+		"an unsupported flow":    "vless://00000000-0000-4000-8000-000000000001@vless.example:443?flow=xtls-rprx-direct#node",
+		"a masked stream in TLS": "vless://00000000-0000-4000-8000-000000000001@vless.example:443?type=tcp&headerType=http&security=tls#node",
+		"an unsupported scheme":  "juicity://secret@juicity.example:443#node",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if outbound, err := ParseSubscriptionLink(link); err == nil {

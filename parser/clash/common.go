@@ -154,19 +154,18 @@ func (t *tlsOptions) build(server string, enabled bool) *option.OutboundTLSOptio
 		CertificatePath: t.CustomCA,
 		Certificate:     nonEmptyLines(t.CustomCAString),
 	}
-	if t.ClientFingerprint != "" {
-		options.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: t.ClientFingerprint}
+	reality := subscription.IsSet(t.RealityOpts)
+	utls, err := subscription.UTLSFingerprint(t.ClientFingerprint, "", reality)
+	if err != nil {
+		// a name nobody knows: Clash would send a browser's hello under Reality all the same
+		utls = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: "chrome"}
 	}
-	if subscription.IsSet(t.RealityOpts) {
+	options.UTLS = utls
+	if reality {
 		options.Reality = &option.OutboundRealityOptions{
 			Enabled:   true,
 			PublicKey: t.RealityOpts.PublicKey,
 			ShortID:   t.RealityOpts.ShortID,
-		}
-		if options.UTLS == nil {
-			// Reality is only distinguishable from the site it borrows when the
-			// hello is a browser's, and Clash always sends one.
-			options.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: "chrome"}
 		}
 	}
 	if t.ECHOpts != nil && t.ECHOpts.Enable.Value() {
