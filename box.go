@@ -122,6 +122,9 @@ func New(options Options) (*Box, error) {
 		ctx = context.Background()
 	}
 	ctx = service.ContextWithDefaultRegistry(ctx)
+	if service.PtrFromContext[urltest.Coordinator](ctx) == nil {
+		service.MustRegisterPtr(ctx, urltest.NewCoordinator())
+	}
 
 	endpointRegistry := service.FromContext[adapter.EndpointRegistry](ctx)
 	inboundRegistry := service.FromContext[adapter.InboundRegistry](ctx)

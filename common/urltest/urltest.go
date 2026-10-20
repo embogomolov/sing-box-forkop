@@ -14,6 +14,7 @@ import (
 	"github.com/sagernet/sing-mux"
 	"github.com/sagernet/sing-snell"
 	"github.com/sagernet/sing/common"
+	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/ntp"
@@ -81,21 +82,25 @@ func (s *HistoryStorage) Close() error {
 }
 
 func URLTest(ctx context.Context, link string, detour N.Dialer) (uint16, error) {
+	return URLTestWithExpectedStatus(ctx, link, detour, nil)
+}
+
+func URLTestWithExpectedStatus(ctx context.Context, link string, detour N.Dialer, expectedStatus ExpectedStatus) (uint16, error) {
 	multiplexOutbound, isMultiplexOutbound := common.Cast[adapter.OutboundWithMultiplex](detour)
 	if isMultiplexOutbound && multiplexOutbound.MultiplexEnabled() {
 		warmContext := adapter.ContextWithKeepSession(ctx)
 		warmContext = mux.ContextWithKeepSession(warmContext)
 		warmContext = contextWithQUICKeepSession(warmContext)
 		warmContext = snell.ContextWithKeepSession(warmContext)
-		_, err := urlTest(warmContext, link, detour)
+		_, err := urlTest(warmContext, link, detour, expectedStatus)
 		if err != nil {
 			return 0, err
 		}
 	}
-	return urlTest(ctx, link, detour)
+	return urlTest(ctx, link, detour, expectedStatus)
 }
 
-func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err error) {
+func urlTest(ctx context.Context, link string, detour N.Dialer, expectedStatus ExpectedStatus) (t uint16, err error) {
 	if link == "" {
 		link = "https://www.gstatic.com/generate_204"
 	}
@@ -150,13 +155,16 @@ func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
 	resp.Body.Close()
 	if IsUnifiedDelayFromContext(ctx) {
 		second := time.Now()
-		resp, err = client.Do(req)
+		resp, err = client.Do(req.WithContext(ctx))
 		if err != nil {
 			return
 		}
 		resp.Body.Close()
 		start = second
 	}
-	t = uint16(time.Since(start) / time.Millisecond)
+	if !expectedStatus.Contains(uint16(resp.StatusCode)) {
+		return 0, E.New("unexpected HTTP status: ", resp.StatusCode)
+	}
+	t = max(uint16(time.Since(start)/time.Millisecond), 1)
 	return
 }
