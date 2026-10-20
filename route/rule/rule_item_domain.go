@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/domainset"
 	"github.com/sagernet/sing/common/domain"
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -45,8 +46,12 @@ func NewDomainItem(domains []string, domainSuffixes []string) (*DomainItem, erro
 			description += "domain_suffix=[" + strings.Join(domainSuffixes, " ") + "]"
 		}
 	}
+	matcher, err := domainset.NewMatcher(domains, domainSuffixes)
+	if err != nil {
+		return nil, err
+	}
 	return &DomainItem{
-		domain.NewMatcher(domains, domainSuffixes, false),
+		matcher,
 		description,
 	}, nil
 }
