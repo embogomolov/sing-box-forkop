@@ -132,12 +132,39 @@ func LinkSettings(host, path, mode, extra string) (Settings, error) {
 	return settings, nil
 }
 
+// Download reads the download leg of a transport, its downloadSettings: the server it dials,
+// the TLS and the XHTTP settings of its own.
+type Download func(content json.RawMessage) (*option.V2RayXHTTPDownloadOptions, error)
+
 // Build renders the settings through sing-box's own decoder, which fills in a server's defaults
 // and refuses a combination sing-box cannot dial, so a broken XHTTP node is reported here.
-func (s Settings) Build() (*option.V2RayTransportOptions, error) {
-	if hasContent(s.DownloadSettings) {
-		return nil, E.New("XHTTP download settings cannot be represented")
+func (s Settings) Build(download Download) (*option.V2RayTransportOptions, error) {
+	base, err := s.Base()
+	if err != nil {
+		return nil, err
 	}
+	// v2rayA writes the modes with "_"
+	options := option.V2RayXHTTPOptions{Mode: strings.ReplaceAll(strings.ToLower(s.Mode), "_", "-"), V2RayXHTTPBaseOptions: base}
+	if hasContent(s.DownloadSettings) {
+		if download == nil {
+			return nil, E.New("XHTTP download settings cannot be represented")
+		}
+		if options.Download, err = download(s.DownloadSettings); err != nil {
+			return nil, E.Cause(err, "invalid XHTTP download settings")
+		}
+	}
+	normalized, err := Normalize(options)
+	if err != nil {
+		return nil, err
+	}
+	return &option.V2RayTransportOptions{
+		Type:         C.V2RayTransportTypeXHTTP,
+		XHTTPOptions: normalized,
+	}, nil
+}
+
+// Base reads the settings of one leg: all of them but the mode and the download leg.
+func (s Settings) Base() (option.V2RayXHTTPBaseOptions, error) {
 	base := option.V2RayXHTTPBaseOptions{
 		Host:                 s.Host,
 		Path:                 s.Path,
@@ -164,25 +191,25 @@ func (s Settings) Build() (*option.V2RayTransportOptions, error) {
 	}
 	var err error
 	if base.SessionPlacement, err = firstOf("session placement", s.SessionIDPlacement, s.SessionPlacement); err != nil {
-		return nil, err
+		return base, err
 	}
 	if base.SessionKey, err = firstOf("session key", s.SessionIDKey, s.SessionKey); err != nil {
-		return nil, err
+		return base, err
 	}
 	maxHeaderBytes, err := firstInt("maximum header bytes", s.ServerMaxHeaderBytes, s.MaxHeaderBytes)
 	if err != nil {
-		return nil, err
+		return base, err
 	}
 	if base.ServerMaxHeaderBytes, err = maxHeaderBytes.Value("XHTTP maximum header bytes"); err != nil {
-		return nil, err
+		return base, err
 	}
 	bufferedPosts, err := firstInt("buffered post limit", s.ScMaxBufferedPosts, s.ScMaxConcurrentPosts)
 	if err != nil {
-		return nil, err
+		return base, err
 	}
 	base.ScMaxBufferedPosts = int64(bufferedPosts)
 	if base.CWND, err = s.CWND.Value("XHTTP cwnd"); err != nil {
-		return nil, err
+		return base, err
 	}
 	if s.XPaddingBytes != nil {
 		base.XPaddingBytes = option.Range[int](*s.XPaddingBytes)
@@ -207,16 +234,7 @@ func (s Settings) Build() (*option.V2RayTransportOptions, error) {
 			}
 		}
 	}
-	// v2rayA writes the modes with "_"
-	mode := strings.ReplaceAll(strings.ToLower(s.Mode), "_", "-")
-	normalized, err := Normalize(option.V2RayXHTTPOptions{Mode: mode, V2RayXHTTPBaseOptions: base})
-	if err != nil {
-		return nil, err
-	}
-	return &option.V2RayTransportOptions{
-		Type:         C.V2RayTransportTypeXHTTP,
-		XHTTPOptions: normalized,
-	}, nil
+	return base, nil
 }
 
 // Normalize fills in what a server assumes for the settings that are left out:
@@ -224,6 +242,11 @@ func (s Settings) Build() (*option.V2RayTransportOptions, error) {
 func Normalize(options option.V2RayXHTTPOptions) (option.V2RayXHTTPOptions, error) {
 	if options.XPaddingBytes.To == 0 {
 		options.XPaddingBytes = DefaultPaddingBytes
+	}
+	if options.Download != nil && options.Download.XPaddingBytes.To == 0 {
+		download := *options.Download
+		download.XPaddingBytes = DefaultPaddingBytes
+		options.Download = &download
 	}
 	encoded, err := json.Marshal(options)
 	if err != nil {

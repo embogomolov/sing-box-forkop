@@ -3,6 +3,7 @@ package link
 import (
 	"encoding/base64"
 	"net/url"
+	"strings"
 	"testing"
 
 	C "github.com/sagernet/sing-box/constant"
@@ -169,5 +170,42 @@ func TestLinkRefusesNodesThatCannotConnect(t *testing.T) {
 		if _, err := ParseSubscriptionLink(link); err != nil {
 			t.Errorf("%s: %v", link, err)
 		}
+	}
+}
+
+// downloadSettings in the extra of a link are the download leg as Xray-core reads it: stream
+// settings of its own, with nothing taken from the upload.
+func TestLinkXHTTPDownloadLeg(t *testing.T) {
+	leg := func(fields string) string {
+		return "vless://" + xrayTestUUID + "@up.example:443?security=tls&sni=cdn.example&type=xhttp&path=%2Fup&mode=packet-up&extra=" +
+			url.QueryEscape(`{"downloadSettings":{`+fields+`}}`) + "#n"
+	}
+	download := parsedVLESS(t, leg(`"address":"down.example","port":8443,"network":"xhttp","security":"tls",
+		"tlsSettings":{"serverName":"dl.example"},"xhttpSettings":{"path":"/down","host":"dl.example"}`)).Transport.XHTTPOptions.Download
+	if download == nil || download.Server != "down.example" || download.ServerPort != 8443 || download.Path != "/down" || download.Host != "dl.example" {
+		t.Fatalf("download %+v", download)
+	}
+	if download.TLS == nil || download.TLS.ServerName != "dl.example" || download.TLS.UTLS == nil || download.TLS.UTLS.Fingerprint != "chrome" {
+		t.Fatalf("download TLS %+v", download.TLS)
+	}
+	if download.XPaddingBytes.From != 100 || download.XPaddingBytes.To != 1000 {
+		t.Fatalf("download padding %v, want Xray's default", download.XPaddingBytes)
+	}
+	reality := parsedVLESS(t, leg(`"address":"down.example","port":443,"security":"reality",
+		"realitySettings":{"serverName":"www.example.com","publicKey":"SSw7I859PPdN4DQ7fxV9fobXM61Ms3mqZRlIY1aJvHQ","shortId":"5a"}`)).Transport.XHTTPOptions.Download
+	if reality == nil || reality.TLS == nil || reality.TLS.Reality == nil || reality.TLS.Reality.ShortID != "5a" {
+		t.Fatalf("REALITY download %+v", reality)
+	}
+	for _, fields := range []string{
+		`"address":"down.example","network":"xhttp"`,
+		`"address":"down.example","port":443,"network":"ws"`,
+		`"address":"down.example","port":443,"sockopt":{"dialerProxy":"other"}`,
+	} {
+		if _, err := ParseSubscriptionLink(leg(fields)); err == nil {
+			t.Errorf("%s was taken", fields)
+		}
+	}
+	if _, err := ParseSubscriptionLink(strings.Replace(leg(`"address":"down.example","port":443`), "packet-up", "stream-one", 1)); err == nil {
+		t.Error("a download leg in stream-one was taken")
 	}
 }

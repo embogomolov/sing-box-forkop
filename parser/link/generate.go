@@ -557,8 +557,10 @@ func canonicalizeShareLinkTransport(value map[string]any) {
 	// so an outbound written without one has to be given Xray's default before
 	// it can be normalised at all.
 	if source["type"] == C.V2RayTransportTypeXHTTP {
-		if padding, isSet := source["x_padding_bytes"]; !isSet || padding == float64(0) {
-			source["x_padding_bytes"] = xhttp.DefaultPaddingBytes.String()
+		for _, leg := range []map[string]any{source, mapValue(source["download"])} {
+			if padding, isSet := leg["x_padding_bytes"]; leg != nil && (!isSet || padding == float64(0)) {
+				leg["x_padding_bytes"] = xhttp.DefaultPaddingBytes.String()
+			}
 		}
 	}
 	encoded, err := json.Marshal(source)
@@ -577,7 +579,22 @@ func canonicalizeShareLinkTransport(value map[string]any) {
 	if json.Unmarshal(normalized, &result) != nil {
 		return
 	}
+	if download := mapValue(result["download"]); download != nil {
+		if tls := mapValue(download["tls"]); tls != nil {
+			if tls["utls"] == nil {
+				tls["utls"] = map[string]any{"enabled": true, "fingerprint": "chrome"}
+			}
+			if tls["server_name"] == download["server"] {
+				delete(tls, "server_name")
+			}
+		}
+	}
 	value["transport"] = result
+}
+
+func mapValue(value any) map[string]any {
+	result, _ := value.(map[string]any)
+	return result
 }
 
 func compactShareLinkValue(value map[string]any) {
@@ -653,6 +670,13 @@ func addV2RayTransportQuery(query url.Values, transport *option.V2RayTransportOp
 			query.Del("alpn")
 		}
 		extra := xhttpExtra(options)
+		if options.Download != nil {
+			download, err := xhttpDownloadExtra(options.Mode, options.Download)
+			if err != nil {
+				return err
+			}
+			extra["downloadSettings"] = download
+		}
 		if len(extra) != 0 {
 			content, err := json.Marshal(extra)
 			if err != nil {
@@ -863,6 +887,47 @@ func xhttpExtra(options option.V2RayXHTTPOptions) map[string]any {
 		extra["xmux"] = xmux
 	}
 	return extra
+}
+
+// xhttpDownloadExtra writes the download leg as Xray-core's downloadSettings, with the fingerprint
+// a client of Xray takes anyway.
+func xhttpDownloadExtra(mode string, download *option.V2RayXHTTPDownloadOptions) (map[string]any, error) {
+	if download.Detour != "" {
+		return nil, E.New("an XHTTP download through another outbound has no share link")
+	}
+	settings := xhttpExtra(option.V2RayXHTTPOptions{Mode: mode, V2RayXHTTPBaseOptions: download.V2RayXHTTPBaseOptions})
+	if download.Host != "" {
+		settings["host"] = download.Host
+	}
+	if download.Path != "" {
+		settings["path"] = download.Path
+	}
+	leg := map[string]any{"address": download.Server, "port": download.ServerPort, "network": "xhttp", "security": "none", "xhttpSettings": settings}
+	tls := download.TLS
+	if tls == nil || !tls.Enabled {
+		return leg, nil
+	}
+	security := map[string]any{"fingerprint": "chrome"}
+	if tls.UTLS != nil && tls.UTLS.Enabled && tls.UTLS.Fingerprint != "" {
+		security["fingerprint"] = tls.UTLS.Fingerprint
+	}
+	if tls.ServerName != "" {
+		security["serverName"] = tls.ServerName
+	}
+	if tls.Reality != nil && tls.Reality.Enabled {
+		security["publicKey"] = tls.Reality.PublicKey
+		security["shortId"] = tls.Reality.ShortID
+		leg["security"], leg["realitySettings"] = "reality", security
+		return leg, nil
+	}
+	if len(tls.ALPN) != 0 {
+		security["alpn"] = []string(tls.ALPN)
+	}
+	if tls.Insecure {
+		security["allowInsecure"] = true
+	}
+	leg["security"], leg["tlsSettings"] = "tls", security
+	return leg, nil
 }
 
 // xhttpXmuxExtra writes every value of the reuse block: sing-box defaults it only when it is

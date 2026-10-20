@@ -547,9 +547,49 @@ func parseTransport(stream streamSettings) (*option.V2RayTransportOptions, error
 		if settings == nil {
 			settings = &xhttp.Settings{}
 		}
-		return settings.Build()
+		return settings.Build(XHTTPDownload)
 	}
 	return nil, E.New("unsupported Xray transport: ", stream.Network)
+}
+
+// XHTTPDownload reads the downloadSettings of an XHTTP transport, in a document or the extra of
+// a share link: stream settings of their own and the address and the port the leg dials, as
+// Xray-core takes them, nothing inherited from the upload.
+func XHTTPDownload(content json.RawMessage) (*option.V2RayXHTTPDownloadOptions, error) {
+	var leg struct {
+		Address string            `json:"address"`
+		Port    subscription.Port `json:"port"`
+		streamSettings
+	}
+	if err := json.Unmarshal(content, &leg); err != nil {
+		return nil, err
+	}
+	if leg.Address == "" || leg.Port == 0 {
+		return nil, E.New("missing address or port")
+	}
+	if leg.Network != "" && leg.transport() != "xhttp" {
+		return nil, E.New("unsupported transport: ", leg.Network)
+	}
+	if leg.Sockopt.DialerProxy != "" {
+		return nil, E.New("unsupported dialer proxy: ", leg.Sockopt.DialerProxy)
+	}
+	tls, err := parseTLS(leg.streamSettings)
+	if err != nil {
+		return nil, err
+	}
+	settings := leg.xhttp()
+	if settings == nil {
+		settings = &xhttp.Settings{}
+	}
+	base, err := settings.Base()
+	if err != nil {
+		return nil, err
+	}
+	return &option.V2RayXHTTPDownloadOptions{
+		V2RayXHTTPBaseOptions:       base,
+		ServerOptions:               option.ServerOptions{Server: leg.Address, ServerPort: uint16(leg.Port)},
+		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: tls},
+	}, nil
 }
 
 func headerType(settings *tcpSettings) string {

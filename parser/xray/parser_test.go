@@ -268,3 +268,18 @@ func TestXrayReadsTheFingerprintAsXrayDoes(t *testing.T) {
 		t.Fatalf("REALITY with a fingerprint nobody knows was taken: %d servers, skipped %v", len(result.Outbounds), result.Skipped)
 	}
 }
+
+func TestXrayReadsTheDownloadLegOfXHTTP(t *testing.T) {
+	result := parse(t, `{"outbounds": [{"protocol": "vless", "tag": "split",
+		"settings": {"vnext": [{"address": "up.example", "port": 443, "users": [{"id": "uuid"}]}]},
+		"streamSettings": {"network": "xhttp", "security": "tls", "tlsSettings": {"serverName": "cdn.example"},
+			"xhttpSettings": {"path": "/up", "mode": "stream-up", "downloadSettings": {
+				"address": "down.example", "port": 443, "network": "xhttp", "security": "reality",
+				"realitySettings": {"serverName": "www.example.com", "publicKey": "k", "shortId": "5a", "fingerprint": "firefox"},
+				"xhttpSettings": {"path": "/down"}}}}}]}`)
+	download := vless(t, result, 0).Transport.XHTTPOptions.Download
+	if download == nil || download.Server != "down.example" || download.Path != "/down" ||
+		download.TLS == nil || download.TLS.Reality == nil || download.TLS.UTLS.Fingerprint != "firefox" {
+		t.Fatalf("download %+v", download)
+	}
+}

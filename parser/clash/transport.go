@@ -111,7 +111,9 @@ func (t *transportOptions) build() (*option.V2RayTransportOptions, error) {
 		if err != nil {
 			return nil, err
 		}
-		return settings.Build()
+		// download-settings of mihomo inherit what they leave out from the node: a semantic of
+		// their own, not Xray's downloadSettings
+		return settings.Build(nil)
 	default:
 		return nil, E.New("unsupported Clash transport: ", t.Network)
 	}

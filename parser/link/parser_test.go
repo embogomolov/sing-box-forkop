@@ -190,6 +190,30 @@ func TestGenerateSubscriptionLinkRoundTrip(t *testing.T) {
 		},
 		{
 			Type: C.TypeVLESS,
+			Tag:  "VLESS XHTTP with a download leg",
+			Options: &option.VLESSOutboundOptions{
+				ServerOptions: option.ServerOptions{Server: "up.example", ServerPort: 443},
+				UUID:          "00000000-0000-4000-8000-000000000006",
+				OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: &option.OutboundTLSOptions{
+					Enabled: true, ServerName: "cdn.example",
+					UTLS: &option.OutboundUTLSOptions{Enabled: true, Fingerprint: "firefox"},
+				}},
+				Transport: &option.V2RayTransportOptions{Type: C.V2RayTransportTypeXHTTP, XHTTPOptions: option.V2RayXHTTPOptions{
+					Mode:                  "stream-up",
+					V2RayXHTTPBaseOptions: option.V2RayXHTTPBaseOptions{Path: "/up"},
+					Download: &option.V2RayXHTTPDownloadOptions{
+						ServerOptions:         option.ServerOptions{Server: "down.example", ServerPort: 8443},
+						V2RayXHTTPBaseOptions: option.V2RayXHTTPBaseOptions{Host: "down.example", Path: "/down", XPaddingBytes: option.Range[int]{From: 50, To: 60}},
+						OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: &option.OutboundTLSOptions{
+							Enabled: true, ServerName: "www.example.com",
+							Reality: &option.OutboundRealityOptions{Enabled: true, PublicKey: "SSw7I859PPdN4DQ7fxV9fobXM61Ms3mqZRlIY1aJvHQ", ShortID: "5a"},
+						}},
+					},
+				}},
+			},
+		},
+		{
+			Type: C.TypeVLESS,
 			Tag:  "VLESS websocket",
 			Options: &option.VLESSOutboundOptions{
 				ServerOptions: option.ServerOptions{Server: "ws.example", ServerPort: 443},

@@ -8,6 +8,7 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/parser/subscription"
 	"github.com/sagernet/sing-box/parser/xhttp"
+	"github.com/sagernet/sing-box/parser/xray"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 )
@@ -77,7 +78,7 @@ func linkTransport(q query, tls *option.OutboundTLSOptions) (*option.V2RayTransp
 		if err != nil {
 			return nil, err
 		}
-		return settings.Build()
+		return settings.Build(xray.XHTTPDownload)
 	case "quic":
 		return nil, E.New("unsupported QUIC transport")
 	}
