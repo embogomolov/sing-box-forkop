@@ -1,0 +1,130 @@
+mixed-port: 7890
+allow-lan: true
+mode: rule
+log-level: info
+proxies:
+  - name: "\U0001F1EA\U0001F1EA Estonia #1"
+    type: vless
+    server: ee.example.test
+    port: 443
+    network: tcp
+    udp: true
+    uuid: 00000000-0000-4000-8000-000000000001
+    packet-encoding: xudp
+    flow: xtls-rprx-vision
+    tls: true
+    servername: ee.example.test
+    reality-opts:
+      public-key: 1ppFTOnZl-3nA7ygUhGsotwSumU8A2m_3qN9D1GOC10
+      short-id: 3fca1964759edc55
+      support-x25519mlkem768: true
+    client-fingerprint: firefox
+  - name: "\U0001F1F8\U0001F1EC Singapore"
+    type: ss
+    server: sg.example.test
+    port: "8388"
+    cipher: chacha20-ietf-poly1305
+    password: 00000000-0000-4000-8000-000000000002
+    udp: true
+    skip-cert-verify: true
+  - name: "\U0001F1FA\U0001F1F8 Los Angeles"
+    type: vless
+    server: la.example.test
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000003
+    encryption: none
+    network: raw
+    tls: true
+    servername: la.example.test
+    client-fingerprint: chrome
+  - name: "\U0001F1EF\U0001F1F5 Tokyo ws"
+    type: vmess
+    server: jp.example.test
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000004
+    alterId: 0
+    cipher: auto
+    tls: true
+    servername: jp.example.test
+    network: ws
+    delay: 128
+    ws-opts:
+      path: /tokyo?ed=2048
+      headers:
+        Host: jp.example.test
+    smux:
+      enabled: true
+      protocol: h2mux
+      max-connections: 4
+  - name: "\U0001F1E9\U0001F1EA Frankfurt hop"
+    type: hysteria2
+    server: de.example.test
+    port: 443
+    ports: 20000-30000
+    hop-interval: 30
+    password: 00000000-0000-4000-8000-000000000005
+    up: 50 Mbps
+    down: 200 Mbps
+    obfs: salamander
+    obfs-password: obfs-secret
+    sni: de.example.test
+  - name: "\U0001F1F3\U0001F1F1 Amsterdam relay"
+    type: trojan
+    server: nl.example.test
+    port: 443
+    password: 00000000-0000-4000-8000-000000000006
+    sni: nl.example.test
+    dialer-proxy: "\U0001F1EA\U0001F1EA Estonia #1"
+  - name: TUIC v4 node
+    type: tuic
+    server: v4.example.test
+    port: 443
+    token: legacy-token
+    sni: v4.example.test
+  - name: SOCKS over TLS
+    type: socks5
+    server: socks.example.test
+    port: 1080
+    tls: true
+    skip-cert-verify: true
+  - name: ShadowTLS node
+    type: vless
+    server: stls.example.test
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000007
+    tls: true
+    shadow-tls-opts:
+      password: shadow-secret
+      version: 3
+  - name: HTTP masquerade
+    type: vmess
+    server: obfs.example.test
+    port: 80
+    uuid: 00000000-0000-4000-8000-000000000008
+    alterId: 0
+    cipher: auto
+    network: http
+    http-opts:
+      method: GET
+      path:
+        - /
+      headers:
+        Connection:
+          - keep-alive
+  - name: "\U0001F1F7\U0001F1FA No VPN"
+    type: direct
+    udp: true
+  - name: DNS-OUT
+    type: dns
+  - name: Direct chain
+    type: socks5
+    server: chain.example.test
+    port: 1080
+    dialer-proxy: "\U0001F1F7\U0001F1FA No VPN"
+proxy-groups:
+  - name: Proxies
+    type: select
+    proxies:
+      - "\U0001F1EA\U0001F1EA Estonia #1"
+rules:
+  - MATCH,Proxies

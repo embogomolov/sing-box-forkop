@@ -1,55 +1,75 @@
 package clash
 
-import "github.com/sagernet/sing-box/option"
+import (
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/parser/subscription"
+	E "github.com/sagernet/sing/common/exceptions"
+)
 
-type VmessOption struct {
-	DialerOptions       `yaml:",inline"`
-	ServerOptions       `yaml:",inline"`
-	*TLSOptions         `yaml:",inline"`
-	UUID                string       `yaml:"uuid"`
-	AlterID             int          `yaml:"alterId"`
-	Cipher              string       `yaml:"cipher"`
-	UDP                 bool         `yaml:"udp,omitempty"`
-	Network             string       `yaml:"network,omitempty"`
-	ServerName          string       `yaml:"servername,omitempty"`
-	HTTPOpts            HTTPOptions  `yaml:"http-opts,omitempty"`
-	HTTP2Opts           HTTP2Options `yaml:"h2-opts,omitempty"`
-	GrpcOpts            GrpcOptions  `yaml:"grpc-opts,omitempty"`
-	WSOpts              WSOptions    `yaml:"ws-opts,omitempty"`
-	PacketAddr          bool         `yaml:"packet-addr,omitempty"`
-	XUDP                bool         `yaml:"xudp,omitempty"`
-	PacketEncoding      string       `yaml:"packet-encoding,omitempty"`
-	GlobalPadding       bool         `yaml:"global-padding,omitempty"`
-	AuthenticatedLength bool         `yaml:"authenticated-length,omitempty"`
-	MuxOpts             *MuxOptions  `yaml:"smux,omitempty"`
+type vmessOptions struct {
+	dialerOptions
+	serverOptions
+	tlsOptions
+	transportOptions
+	UUID                subscription.String `json:"uuid"`
+	AlterID             subscription.Int    `json:"alterid"`
+	Cipher              string              `json:"cipher"`
+	UDP                 subscription.Bool   `json:"udp"`
+	PacketAddr          subscription.Bool   `json:"packet-addr"`
+	XUDP                subscription.Bool   `json:"xudp"`
+	PacketEncoding      string              `json:"packet-encoding"`
+	GlobalPadding       subscription.Bool   `json:"global-padding"`
+	AuthenticatedLength subscription.Bool   `json:"authenticated-length"`
+	MuxOpts             *muxOptions         `json:"smux"`
 }
 
-func (v *VmessOption) Build() any {
-	if v.TLSOptions != nil {
-		v.SNI = v.ServerName
+func (v *vmessOptions) Build() (any, error) {
+	if err := v.serverOptions.check(); err != nil {
+		return nil, err
 	}
-	switch v.PacketEncoding {
+	if v.UUID == "" {
+		return nil, E.New("missing uuid")
+	}
+	if err := v.tlsOptions.check(); err != nil {
+		return nil, err
+	}
+	transport, err := v.transportOptions.build()
+	if err != nil {
+		return nil, err
+	}
+	alterID, err := v.AlterID.Value("alterId")
+	if err != nil {
+		return nil, err
+	}
+	security := v.Cipher
+	if security == "" {
+		security = "auto"
+	}
+	packetEncoding := v.PacketEncoding
+	switch packetEncoding {
 	case "":
-		if v.XUDP {
-			v.PacketEncoding = "xudp"
-		} else if v.PacketAddr {
-			v.PacketEncoding = "packetaddr"
+		if v.XUDP.Value() {
+			packetEncoding = "xudp"
+		} else if v.PacketAddr.Value() {
+			packetEncoding = "packetaddr"
 		}
 	case "packet":
-		v.PacketEncoding = "packetaddr"
+		packetEncoding = "packetaddr"
 	}
+	// Clash omits the tls key for h2, which only exists over TLS.
+	tls := v.tlsOptions.build(v.Server, v.Network == "h2")
 	return &option.VMessOutboundOptions{
-		DialerOptions:               v.DialerOptions.Build(),
-		ServerOptions:               v.ServerOptions.Build(),
-		UUID:                        v.UUID,
-		Security:                    v.Cipher,
-		AlterId:                     v.AlterID,
-		GlobalPadding:               v.GlobalPadding,
-		AuthenticatedLength:         v.AuthenticatedLength,
-		Network:                     clashNetworks(v.UDP),
-		OutboundTLSOptionsContainer: clashTLSOptions(v.Server, v.TLSOptions),
-		PacketEncoding:              v.PacketEncoding,
-		Multiplex:                   v.MuxOpts.Build(),
-		Transport:                   clashTransport(v.Network, v.HTTPOpts, v.HTTP2Opts, v.GrpcOpts, v.WSOpts),
-	}
+		DialerOptions:               v.dialerOptions.build(),
+		ServerOptions:               v.serverOptions.build(),
+		UUID:                        string(v.UUID),
+		Security:                    security,
+		AlterId:                     alterID,
+		GlobalPadding:               v.GlobalPadding.Value(),
+		AuthenticatedLength:         v.AuthenticatedLength.Value(),
+		Network:                     networks(v.UDP),
+		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: tls},
+		PacketEncoding:              packetEncoding,
+		Multiplex:                   v.MuxOpts.build(),
+		Transport:                   transport,
+	}, nil
 }

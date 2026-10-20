@@ -2,49 +2,64 @@ package raw
 
 import (
 	"context"
-	"encoding/base64"
+	"errors"
+	"net/url"
 	"strings"
 
-	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/parser/link"
-	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing-box/parser/subscription"
+	F "github.com/sagernet/sing/common/format"
 )
 
-func ParseRawSubscription(ctx context.Context, content string) ([]option.Outbound, error) {
-	if base64Content, err := DecodeBase64URLSafe(content); err == nil {
-		servers, _ := parseRawSubscription(base64Content)
-		if len(servers) > 0 {
-			return servers, err
+// ParseRawSubscription reads the plain list of share links most providers hand
+// out, one link per line.
+func ParseRawSubscription(_ context.Context, content string) (subscription.Result, error) {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	recognized := false
+	for _, line := range lines {
+		if strings.Contains(line, "://") {
+			recognized = true
+			break
 		}
 	}
-	return parseRawSubscription(content)
-}
-
-func parseRawSubscription(content string) ([]option.Outbound, error) {
-	var servers []option.Outbound
-	content = strings.ReplaceAll(content, "\r\n", "\n")
-	linkList := strings.Split(content, "\n")
-	for _, linkLine := range linkList {
-		server, err := link.ParseSubscriptionLink(linkLine)
-		if err != nil {
+	if !recognized {
+		return subscription.Result{}, subscription.ErrUnrecognized
+	}
+	collector := subscription.NewCollector("subscription")
+	for index, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		servers = append(servers, server)
+		outbound, err := link.ParseSubscriptionLink(line)
+		if err != nil {
+			collector.Skip("", linkLabel(index, line), safeLinkParseError(err))
+			continue
+		}
+		collector.Add(outbound)
 	}
-	if len(servers) == 0 {
-		return nil, E.New("no servers found")
-	}
-	return servers, nil
+	return collector.Result(), nil
 }
 
-func DecodeBase64URLSafe(content string) (string, error) {
-	s := strings.ReplaceAll(content, " ", "-")
-	s = strings.ReplaceAll(s, "/", "_")
-	s = strings.ReplaceAll(s, "+", "-")
-	s = strings.ReplaceAll(s, "=", "")
-	result, err := base64.RawURLEncoding.DecodeString(s)
+// linkLabel names a link for a report without repeating the link itself, which
+// carries the server address and its credentials.
+func linkLabel(index int, link string) string {
+	parsed, err := url.Parse(link)
 	if err != nil {
-		return content, nil
+		return F.ToString("subscription link ", index+1)
 	}
-	return string(result), nil
+	if parsed.Fragment != "" {
+		return F.ToString("subscription link ", index+1, " (", parsed.Scheme, ", ", parsed.Fragment, ")")
+	}
+	return F.ToString("subscription link ", index+1, " (", parsed.Scheme, ")")
+}
+
+// safeLinkParseError strips the link out of a url.Error, so a report of a link
+// that could not be read never repeats the credentials it carries.
+func safeLinkParseError(err error) error {
+	var urlError *url.Error
+	if errors.As(err, &urlError) {
+		return errors.New(urlError.Op + ": " + urlError.Err.Error())
+	}
+	return err
 }

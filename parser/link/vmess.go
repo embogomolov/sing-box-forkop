@@ -3,158 +3,241 @@ package link
 import (
 	"encoding/json"
 	"net/url"
-	"regexp"
-	"strconv"
+	"strings"
 
-	"github.com/sagernet/sing-box/common"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/parser/subscription"
+	"github.com/sagernet/sing-box/parser/xhttp"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 )
 
+// vmessPayload is the object a VMess link carries, as v2rayN writes it. Every
+// key is present in a generated link whether it is set or not, so an unset one
+// arrives as an empty string and must not overwrite a value taken from
+// elsewhere.
+type vmessPayload struct {
+	PS                 subscription.String     `json:"ps"`
+	Add                subscription.String     `json:"add"`
+	Port               subscription.Port       `json:"port"`
+	ID                 subscription.String     `json:"id"`
+	AlterID            subscription.Int        `json:"aid"`
+	Security           subscription.String     `json:"scy"`
+	Network            subscription.String     `json:"net"`
+	HeaderType         subscription.String     `json:"type"`
+	Host               subscription.String     `json:"host"`
+	Path               subscription.String     `json:"path"`
+	Seed               subscription.String     `json:"seed"`
+	Mode               subscription.String     `json:"mode"`
+	Extra              json.RawMessage         `json:"extra"`
+	TLS                subscription.String     `json:"tls"`
+	SNI                subscription.String     `json:"sni"`
+	ALPN               subscription.StringList `json:"alpn"`
+	Fingerprint        subscription.String     `json:"fp"`
+	Insecure           subscription.Bool       `json:"insecure"`
+	AllowInsecure      subscription.Bool       `json:"allowInsecure"`
+	SkipCertVerify     subscription.Bool       `json:"skip-cert-verify"`
+	PacketEncoding     subscription.String     `json:"packet_encoding"`
+	PacketEncodingCaml subscription.String     `json:"packetEncoding"`
+	XUDP               subscription.Bool       `json:"xudp"`
+	TCPFastOpen        subscription.Bool       `json:"tfo"`
+}
+
+// parseVMessLink reads either shape of a VMess link: the base64 encoded object
+// v2rayN exports, or the URL form of Xray, whose query is the one VLESS uses.
 func parseVMessLink(link string) (option.Outbound, error) {
-	var proxy map[string]string
-	reg := regexp.MustCompile(`(\"[^:,]+?\"[ \t]*:[ \t]*)(\d+|true|false)`)
-	s := reg.ReplaceAllString(link, `$1"$2"`)
-	err := json.Unmarshal([]byte(s[8:]), &proxy)
+	decoded, isEncoded := subscription.DecodeBase64(strings.TrimPrefix(link, "vmess://"))
+	if !isEncoded || !strings.HasPrefix(strings.TrimSpace(decoded), "{") {
+		return parseVMessURL(link)
+	}
+	var payload vmessPayload
+	if err := json.Unmarshal([]byte(decoded), &payload); err != nil {
+		return option.Outbound{}, E.Cause(err, "invalid VMess link")
+	}
+	if payload.ID == "" {
+		return option.Outbound{}, E.New("missing uuid")
+	}
+	if payload.Add == "" {
+		return option.Outbound{}, E.New("missing server")
+	}
+	if payload.Port == 0 {
+		return option.Outbound{}, E.New("missing server port")
+	}
+	transport, err := vmessTransport(payload)
 	if err != nil {
-		proxy = make(map[string]string)
-		linkURL, err := url.Parse(link)
-		if err != nil {
-			return option.Outbound{}, err
+		return option.Outbound{}, err
+	}
+	alterID, err := payload.AlterID.Value("alterId")
+	if err != nil {
+		return option.Outbound{}, err
+	}
+	security := payload.Security
+	if security == "" {
+		security = "auto"
+	}
+	options := &option.VMessOutboundOptions{
+		ServerOptions: option.ServerOptions{Server: string(payload.Add), ServerPort: uint16(payload.Port)},
+		UUID:          string(payload.ID),
+		Security:      string(security),
+		AlterId:       alterID,
+		Transport:     transport,
+		DialerOptions: option.DialerOptions{AbstractDialerOptions: option.AbstractDialerOptions{TCPFastOpen: payload.TCPFastOpen.Value()}},
+	}
+	switch {
+	case payload.PacketEncoding != "":
+		options.PacketEncoding = string(payload.PacketEncoding)
+	case payload.PacketEncodingCaml != "":
+		options.PacketEncoding = string(payload.PacketEncodingCaml)
+	case payload.XUDP.Value():
+		options.PacketEncoding = "xudp"
+	}
+	if payload.TLS == "reality" {
+		return option.Outbound{}, E.New("unsupported security: reality")
+	}
+	// h2 exists only over TLS, so a link that selects it means TLS whether it
+	// says so or not.
+	tlsEnabled := payload.TLS == "tls" || payload.TLS == "1" || payload.TLS == "true" || payload.Network == "h2"
+	if tlsEnabled {
+		tls := &option.OutboundTLSOptions{
+			Enabled:    true,
+			ServerName: string(payload.Add),
+			Insecure:   payload.Insecure.Value() || payload.AllowInsecure.Value() || payload.SkipCertVerify.Value(),
+			ALPN:       badoption.Listable[string](payload.ALPN),
 		}
-		if linkURL.User == nil || linkURL.User.Username() == "" {
-			return option.Outbound{}, E.New("missing uuid")
+		if payload.SNI != "" {
+			tls.ServerName = string(payload.SNI)
+		} else if payload.Host != "" && payload.Network == "ws" {
+			tls.ServerName = string(payload.Host)
 		}
-		proxy["id"] = linkURL.User.Username()
-		proxy["add"] = linkURL.Hostname()
-		proxy["port"] = linkURL.Port()
-		proxy["ps"] = linkURL.Fragment
-		for key, values := range linkURL.Query() {
-			value := values[0]
-			switch key {
-			case "type":
-				if value == "http" {
-					proxy["net"] = "tcp"
-					proxy["type"] = "http"
-				}
-			case "encryption":
-				proxy["scy"] = value
-			case "alterId":
-				proxy["aid"] = value
-			case "key", "alpn", "seed", "path", "host":
-				proxy[key] = value
-			default:
-				proxy[key] = value
-			}
+		if payload.Fingerprint != "" {
+			tls.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: string(payload.Fingerprint)}
+		}
+		options.TLS = tls
+	}
+	return option.Outbound{
+		Type:    C.TypeVMess,
+		Tag:     string(payload.PS),
+		Options: options,
+	}, nil
+}
+
+func parseVMessURL(link string) (option.Outbound, error) {
+	linkURL, err := url.Parse(link)
+	if err != nil {
+		return option.Outbound{}, err
+	}
+	if linkURL.User == nil || linkURL.User.Username() == "" {
+		return option.Outbound{}, E.New("missing uuid")
+	}
+	server, err := serverAddress(linkURL)
+	if err != nil {
+		return option.Outbound{}, err
+	}
+	port, err := serverPort(linkURL, 0)
+	if err != nil {
+		return option.Outbound{}, err
+	}
+	q := linkQuery(linkURL)
+	transport, err := linkTransport(q)
+	if err != nil {
+		return option.Outbound{}, err
+	}
+	tls, err := linkTLS(q, server, false)
+	if err != nil {
+		return option.Outbound{}, err
+	}
+	var alterID subscription.Int
+	if value := q.get("alterId", "aid"); value != "" {
+		if err = alterID.UnmarshalJSON([]byte(`"` + value + `"`)); err != nil {
+			return option.Outbound{}, E.Cause(err, "invalid alterId")
 		}
 	}
-	outbound := option.Outbound{
+	alterIDValue, err := alterID.Value("alterId")
+	if err != nil {
+		return option.Outbound{}, err
+	}
+	security := q.get("encryption", "scy")
+	if security == "" {
+		security = "auto"
+	}
+	return option.Outbound{
 		Type: C.TypeVMess,
-	}
-	options := option.VMessOutboundOptions{
-		Security: "auto",
-	}
-	TLSOptions := option.OutboundTLSOptions{
-		ECH:     &option.OutboundECHOptions{},
-		UTLS:    &option.OutboundUTLSOptions{},
-		Reality: &option.OutboundRealityOptions{},
-	}
-	for key, value := range proxy {
-		switch key {
-		case "ps":
-			outbound.Tag = value
-		case "add":
-			options.Server = value
-			TLSOptions.ServerName = value
-		case "port":
-			options.ServerPort = common.StringToType[uint16](value)
-		case "id":
-			options.UUID = value
-		case "scy":
-			options.Security = value
-		case "aid":
-			options.AlterId, _ = strconv.Atoi(value)
-		case "packet_encoding":
-			options.PacketEncoding = value
-		case "xudp":
-			if value == "1" || value == "true" {
-				options.PacketEncoding = "xudp"
-			}
-		case "tls":
-			if value == "1" || value == "true" || value == "tls" {
-				TLSOptions.Enabled = true
-			}
-		case "insecure", "skip-cert-verify":
-			if value == "1" || value == "true" {
-				TLSOptions.Insecure = true
-			}
-		case "fp":
-			TLSOptions.UTLS.Enabled = true
-			TLSOptions.UTLS.Fingerprint = value
-		case "net":
-			Transport := option.V2RayTransportOptions{
-				Type: "",
-				WebsocketOptions: option.V2RayWebsocketOptions{
-					Headers: badoption.HTTPHeader{},
-				},
-				HTTPOptions: option.V2RayHTTPOptions{
-					Host:    badoption.Listable[string]{},
-					Headers: map[string]badoption.Listable[string]{},
-				},
-				GRPCOptions: option.V2RayGRPCOptions{},
-			}
-			switch value {
-			case "ws":
-				Transport.Type = C.V2RayTransportTypeWebsocket
-				Transport.WebsocketOptions = v2rayTransportWs(proxy["host"], proxy["path"])
-			case "h2":
-				Transport.Type = C.V2RayTransportTypeHTTP
-				TLSOptions.Enabled = true
-				if host, exists := proxy["host"]; exists && host != "" {
-					Transport.HTTPOptions.Host = []string{host}
-				}
-				if path, exists := proxy["path"]; exists && path != "" {
-					Transport.HTTPOptions.Path = path
-				}
-			case "tcp":
-				if tType, exists := proxy["type"]; exists {
-					if tType != "http" {
-						continue
-					}
-					Transport.Type = C.V2RayTransportTypeHTTP
-					if method, exists := proxy["method"]; exists {
-						Transport.HTTPOptions.Method = method
-					}
-					if host, exists := proxy["host"]; exists && host != "" {
-						Transport.HTTPOptions.Host = []string{host}
-					}
-					if path, exists := proxy["path"]; exists && path != "" {
-						Transport.HTTPOptions.Path = path
-					}
-					if headers, exists := proxy["headers"]; exists {
-						Transport.HTTPOptions.Headers = common.StringToType[badoption.HTTPHeader](headers)
-					}
-				}
-			case "grpc":
-				Transport.Type = C.V2RayTransportTypeGRPC
-				if host, exists := proxy["host"]; exists && host != "" {
-					Transport.GRPCOptions.ServiceName = host
-				}
-			default:
-				continue
-			}
-			options.Transport = &Transport
-		case "tfo", "tcp-fast-open", "tcp_fast_open":
-			if value == "1" || value == "true" {
-				options.TCPFastOpen = true
-			}
+		Tag:  linkURL.Fragment,
+		Options: &option.VMessOutboundOptions{
+			ServerOptions:               option.ServerOptions{Server: server, ServerPort: port},
+			UUID:                        linkURL.User.Username(),
+			Security:                    security,
+			AlterId:                     alterIDValue,
+			PacketEncoding:              q.get("packetEncoding", "packet_encoding"),
+			OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: tls},
+			Transport:                   transport,
+			DialerOptions:               option.DialerOptions{AbstractDialerOptions: option.AbstractDialerOptions{TCPFastOpen: q.flag("tfo", "tcp-fast-open", "tcp_fast_open")}},
+		},
+	}, nil
+}
+
+func vmessTransport(payload vmessPayload) (*option.V2RayTransportOptions, error) {
+	switch string(payload.Network) {
+	case "", "tcp", "raw":
+		if header := string(payload.HeaderType); header != "" && header != "none" {
+			return nil, E.New("unsupported TCP header: ", header)
 		}
+		return nil, nil
+	case "ws", "websocket":
+		path, earlyData := subscription.SplitWebsocketEarlyData(string(payload.Path))
+		options := option.V2RayWebsocketOptions{Path: path}
+		if payload.Host != "" {
+			options.Headers = badoption.HTTPHeader{"Host": []string{string(payload.Host)}}
+		}
+		if earlyData > 0 {
+			options.MaxEarlyData = earlyData
+			options.EarlyDataHeaderName = "Sec-WebSocket-Protocol"
+		}
+		return &option.V2RayTransportOptions{
+			Type:             C.V2RayTransportTypeWebsocket,
+			WebsocketOptions: options,
+		}, nil
+	case "httpupgrade":
+		path, _ := subscription.SplitWebsocketEarlyData(string(payload.Path))
+		return &option.V2RayTransportOptions{
+			Type: C.V2RayTransportTypeHTTPUpgrade,
+			HTTPUpgradeOptions: option.V2RayHTTPUpgradeOptions{
+				Host: string(payload.Host),
+				Path: path,
+			},
+		}, nil
+	case "h2", "http", "h3":
+		var host badoption.Listable[string]
+		if payload.Host != "" {
+			host = strings.Split(string(payload.Host), ",")
+		}
+		return &option.V2RayTransportOptions{
+			Type: C.V2RayTransportTypeHTTP,
+			HTTPOptions: option.V2RayHTTPOptions{
+				Host: host,
+				Path: string(payload.Path),
+			},
+		}, nil
+	case "grpc", "gun":
+		// The service name lives in the path in current exports and in the host
+		// in older ones.
+		serviceName := string(payload.Path)
+		if serviceName == "" {
+			serviceName = string(payload.Host)
+		}
+		return &option.V2RayTransportOptions{
+			Type:        C.V2RayTransportTypeGRPC,
+			GRPCOptions: option.V2RayGRPCOptions{ServiceName: serviceName},
+		}, nil
+	case "xhttp", "splithttp":
+		settings, err := xhttp.LinkSettings(string(payload.Host), string(payload.Path), string(payload.Mode), string(payload.Extra))
+		if err != nil {
+			return nil, err
+		}
+		return settings.Build()
+	case "quic":
+		return nil, E.New("unsupported QUIC transport")
 	}
-	if TLSOptions.Enabled {
-		options.TLS = &TLSOptions
-	}
-	outbound.Options = &options
-	return outbound, nil
+	return nil, E.New("unsupported transport: ", string(payload.Network))
 }

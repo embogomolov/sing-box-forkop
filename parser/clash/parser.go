@@ -2,105 +2,149 @@ package clash
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing-box/parser/subscription"
 	E "github.com/sagernet/sing/common/exceptions"
 
 	"gopkg.in/yaml.v3"
 )
 
-type ClashConfig struct {
-	Proxies []ClashProxy `yaml:"proxies"`
+type proxyOptions interface {
+	Build() (any, error)
 }
 
-type _ClashProxy struct {
-	Name    string `yaml:"name"`
-	Type    string `yaml:"type"`
-	Options Proxy  `yaml:"-"`
-
-	SingType string `yaml:"-"`
-}
-type ClashProxy _ClashProxy
-
-type Proxy interface {
-	Build() any
-}
-
-func (c *ClashProxy) UnmarshalYAML(value *yaml.Node) error {
-	err := value.Decode((*_ClashProxy)(c))
-	if err != nil {
-		return err
-	}
-	var options Proxy
-	switch c.Type {
-	case "ss":
-		c.SingType = C.TypeShadowsocks
-		options = &ShadowSocksOption{}
-	case "tuic":
-		c.SingType = C.TypeTUIC
-		options = &TuicOption{}
+// proxyTypes maps a Clash proxy type onto the sing-box outbound that speaks the
+// same protocol. A type Clash knows and sing-box does not is refused for that
+// one node; nothing else in the subscription is affected.
+func proxyTypes(proxyType string) (string, proxyOptions, bool) {
+	switch proxyType {
+	case "ss", "shadowsocks":
+		return C.TypeShadowsocks, &shadowsocksOptions{}, true
 	case "vmess":
-		c.SingType = C.TypeVMess
-		options = &VmessOption{}
+		return C.TypeVMess, &vmessOptions{}, true
 	case "vless":
-		c.SingType = C.TypeVLESS
-		options = &VlessOption{}
-	case "socks5":
-		c.SingType = C.TypeSOCKS
-		options = &Socks5Option{}
-	case "http":
-		c.SingType = C.TypeHTTP
-		options = &HttpOption{}
+		return C.TypeVLESS, &vlessOptions{}, true
 	case "trojan":
-		c.SingType = C.TypeTrojan
-		options = &TrojanOption{}
+		return C.TypeTrojan, &trojanOptions{}, true
 	case "hysteria":
-		c.SingType = C.TypeHysteria
-		options = &HysteriaOption{}
-	case "hysteria2":
-		c.SingType = C.TypeHysteria2
-		options = &Hysteria2Option{}
-	case "ssh":
-		c.SingType = C.TypeSSH
-		options = &SSHOption{}
+		return C.TypeHysteria, &hysteriaOptions{}, true
+	case "hysteria2", "hy2":
+		return C.TypeHysteria2, &hysteria2Options{}, true
+	case "tuic":
+		return C.TypeTUIC, &tuicOptions{}, true
 	case "anytls":
-		c.SingType = C.TypeAnyTLS
-		options = &AnyTLSOption{}
-	default:
-		return nil
+		return C.TypeAnyTLS, &anyTLSOptions{}, true
+	case "snell":
+		return C.TypeSnell, &snellOptions{}, true
+	case "mieru":
+		return C.TypeMieru, &mieruOptions{}, true
+	case "socks5":
+		return C.TypeSOCKS, &socksOptions{}, true
+	case "http":
+		return C.TypeHTTP, &httpOptions{}, true
+	case "ssh":
+		return C.TypeSSH, &sshOptions{}, true
 	}
-	err = value.Decode(options)
-	if err != nil {
-		return err
-	}
-	c.Options = options
-	return nil
+	return "", nil, false
 }
 
-func (c *ClashProxy) Build() option.Outbound {
-	outbound := option.Outbound{
-		Tag:  c.Name,
-		Type: c.SingType,
-	}
-	if c.Options != nil {
-		outbound.Options = c.Options.Build()
-	}
-	return outbound
+// removedTypes are the protocols Clash still speaks and sing-box does not, so
+// the reason a node is left out names where the protocol went rather than
+// reading as a gap in this parser.
+var removedTypes = map[string]string{
+	"ssr":          "ShadowsocksR was removed from sing-box in 1.6.0",
+	"shadowsocksr": "ShadowsocksR was removed from sing-box in 1.6.0",
+	"shadowquic":   "ShadowQUIC has no sing-box equivalent",
+	"gost-relay":   "the GOST relay has no sing-box equivalent",
+	"zerotier":     "ZeroTier has no sing-box equivalent",
+	"wireguard":    "the WireGuard outbound was replaced by an endpoint, which a provider cannot carry",
 }
 
-func ParseClashSubscription(_ context.Context, content string) ([]option.Outbound, error) {
-	config := &ClashConfig{}
-	err := yaml.Unmarshal([]byte(content), &config)
-	if err != nil {
-		return nil, E.Cause(err, "parse clash config")
+// plumbingTypes are the Clash entries that are not servers at all. Dialling
+// through direct is dialling directly, which sing-box writes as no detour;
+// dialling through the rest leaves the caller with nothing.
+var plumbingTypes = map[string]bool{
+	"direct": true, "dns": true, "reject": true, "reject-drop": true,
+	"pass": true, "compatible": true, "rematch": true,
+}
+
+func ParseClashSubscription(_ context.Context, content string) (subscription.Result, error) {
+	var document struct {
+		Proxies *[]yaml.Node `yaml:"proxies"`
 	}
-	outbounds := common.FilterIsInstance(config.Proxies, func(proxy ClashProxy) (option.Outbound, bool) {
-		if proxy.SingType == "" {
-			return option.Outbound{}, false
+	if err := yaml.Unmarshal([]byte(content), &document); err != nil {
+		// YAML is read as a whole, so one malformed proxy (usually an unquoted IPv6 address in a name)
+		// breaks the document; a configuration that plainly is Clash's gets the line that broke.
+		if !looksLikeClash(content) {
+			return subscription.Result{}, subscription.ErrUnrecognized
 		}
-		return proxy.Build(), true
-	})
-	return outbounds, nil
+		return subscription.Result{}, E.Cause(err, "invalid Clash configuration")
+	}
+	if document.Proxies == nil {
+		return subscription.Result{}, subscription.ErrUnrecognized
+	}
+	collector := subscription.NewCollector("Clash")
+	for index := range *document.Proxies {
+		node := &(*document.Proxies)[index]
+		proxyContent, err := proxyContent(node)
+		if err != nil {
+			collector.Skip("", collector.Label(index, ""), err)
+			continue
+		}
+		var identity struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(proxyContent, &identity)
+		label := collector.Label(index, identity.Name)
+		proxyType := strings.ToLower(strings.TrimSpace(identity.Type))
+		if plumbingTypes[proxyType] {
+			if proxyType == "direct" {
+				collector.Direct(identity.Name)
+			} else {
+				collector.Discard(identity.Name)
+			}
+			continue
+		}
+		if reason, removed := removedTypes[proxyType]; removed {
+			collector.Skip(identity.Name, label, E.New(reason))
+			continue
+		}
+		outboundType, options, supported := proxyTypes(proxyType)
+		if !supported {
+			collector.Skip(identity.Name, label, E.New("unsupported proxy type: ", identity.Type))
+			continue
+		}
+		if err = decodeProxy(proxyContent, options); err != nil {
+			collector.Skip(identity.Name, label, err)
+			continue
+		}
+		built, err := options.Build()
+		if err != nil {
+			collector.Skip(identity.Name, label, err)
+			continue
+		}
+		collector.Add(option.Outbound{
+			Type:    outboundType,
+			Tag:     identity.Name,
+			Options: built,
+		})
+	}
+	return collector.Result(), nil
+}
+
+// looksLikeClash reports whether the content declares proxies the way a Clash
+// configuration does, which is enough to name the format when the document is
+// too broken to be read.
+func looksLikeClash(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "proxies:") {
+			return true
+		}
+	}
+	return false
 }

@@ -1,49 +1,65 @@
 package clash
 
-import "github.com/sagernet/sing-box/option"
+import (
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/parser/subscription"
+	E "github.com/sagernet/sing/common/exceptions"
+)
 
-type VlessOption struct {
-	DialerOptions  `yaml:",inline"`
-	ServerOptions  `yaml:",inline"`
-	*TLSOptions    `yaml:",inline"`
-	UUID           string       `yaml:"uuid"`
-	Flow           string       `yaml:"flow,omitempty"`
-	UDP            bool         `yaml:"udp,omitempty"`
-	PacketAddr     bool         `yaml:"packet-addr,omitempty"`
-	XUDP           bool         `yaml:"xudp,omitempty"`
-	PacketEncoding string       `yaml:"packet-encoding,omitempty"`
-	Network        string       `yaml:"network,omitempty"`
-	ServerName     string       `yaml:"servername,omitempty"`
-	HTTPOpts       HTTPOptions  `yaml:"http-opts,omitempty"`
-	HTTP2Opts      HTTP2Options `yaml:"h2-opts,omitempty"`
-	GrpcOpts       GrpcOptions  `yaml:"grpc-opts,omitempty"`
-	WSOpts         WSOptions    `yaml:"ws-opts,omitempty"`
-	MuxOpts        *MuxOptions  `yaml:"smux,omitempty"`
+type vlessOptions struct {
+	dialerOptions
+	serverOptions
+	tlsOptions
+	transportOptions
+	UUID           subscription.String `json:"uuid"`
+	Flow           string              `json:"flow"`
+	Encryption     string              `json:"encryption"`
+	UDP            subscription.Bool   `json:"udp"`
+	PacketAddr     subscription.Bool   `json:"packet-addr"`
+	PacketEncoding string              `json:"packet-encoding"`
+	MuxOpts        *muxOptions         `json:"smux"`
 }
 
-func (v *VlessOption) Build() any {
-	if v.TLSOptions != nil {
-		v.SNI = v.ServerName
+func (v *vlessOptions) Build() (any, error) {
+	if err := v.serverOptions.check(); err != nil {
+		return nil, err
 	}
-	switch v.PacketEncoding {
-	case "":
-		if v.PacketAddr {
-			v.PacketEncoding = "packetaddr"
-		} else {
-			v.PacketEncoding = "xudp"
-		}
-	case "packet":
-		v.PacketEncoding = "packetaddr"
+	if v.UUID == "" {
+		return nil, E.New("missing uuid")
 	}
-	return &option.VLESSOutboundOptions{
-		DialerOptions:               v.DialerOptions.Build(),
-		ServerOptions:               v.ServerOptions.Build(),
-		UUID:                        v.UUID,
+	if err := v.tlsOptions.check(); err != nil {
+		return nil, err
+	}
+	if err := subscription.CheckVLESSFlow(v.Flow); err != nil {
+		return nil, err
+	}
+	transport, err := v.transportOptions.build()
+	if err != nil {
+		return nil, err
+	}
+	// Leaving the encoding unset is what both Clash and sing-box read as xudp,
+	// so a node that names none is left alone rather than written out with a
+	// value the other formats would not have produced.
+	packetEncoding := v.PacketEncoding
+	switch {
+	case packetEncoding == "packet":
+		packetEncoding = "packetaddr"
+	case packetEncoding == "" && v.PacketAddr.Value():
+		packetEncoding = "packetaddr"
+	}
+	options := &option.VLESSOutboundOptions{
+		DialerOptions:               v.dialerOptions.build(),
+		ServerOptions:               v.serverOptions.build(),
+		UUID:                        string(v.UUID),
 		Flow:                        v.Flow,
-		Network:                     clashNetworks(v.UDP),
-		OutboundTLSOptionsContainer: clashTLSOptions(v.Server, v.TLSOptions),
-		Multiplex:                   v.MuxOpts.Build(),
-		Transport:                   clashTransport(v.Network, v.HTTPOpts, v.HTTP2Opts, v.GrpcOpts, v.WSOpts),
-		PacketEncoding:              &v.PacketEncoding,
+		Encryption:                  subscription.VLESSEncryption(v.Encryption),
+		Network:                     networks(v.UDP),
+		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: v.tlsOptions.build(v.Server, false)},
+		Multiplex:                   v.MuxOpts.build(),
+		Transport:                   transport,
 	}
+	if packetEncoding != "" {
+		options.PacketEncoding = &packetEncoding
+	}
+	return options, nil
 }

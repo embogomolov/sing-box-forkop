@@ -412,7 +412,7 @@ func New(options Options) (*Box, error) {
 			providerOptions.Options,
 		)
 		if err != nil {
-			return nil, E.Cause(err, "initialize provider[", i, "]")
+			return nil, E.Cause(err, "initialize provider[", i, "] ", providerOptions.Type, "[", tag, "]")
 		}
 	}
 	for i, certificateProviderOptions := range options.CertificateProviders {

@@ -29,6 +29,17 @@ type ProviderSubscriptionInfo interface {
 	SubscriptionInfo() SubscriptionInfo
 }
 
+type ProviderSubscriptionMetadata interface {
+	SubscriptionMetadata() SubscriptionMetadata
+}
+
+type ProviderOutboundLink interface {
+	// OutboundLink returns a share link for one of the provider outbounds. The
+	// second result reports whether the provider owns the tag, the error why no
+	// link can be generated for it.
+	OutboundLink(tag string) (string, bool, error)
+}
+
 type ProviderRegistry interface {
 	option.ProviderOptionsRegistry
 	CreateProvider(ctx context.Context, router Router, logFactory log.Factory, tag string, providerType string, options any) (Provider, error)
@@ -47,6 +58,16 @@ type SubscriptionInfo struct {
 	Download int64
 	Total    int64
 	Expire   int64
+}
+
+type SubscriptionMetadata struct {
+	Title       string `json:"title,omitempty"`
+	WebPageURL  string `json:"webPageUrl,omitempty"`
+	SupportURL  string `json:"supportUrl,omitempty"`
+	Announce    string `json:"announce,omitempty"`
+	AnnounceURL string `json:"announceUrl,omitempty"`
+	RefillDate  int64  `json:"refillDate,omitempty"`
+	FileName    string `json:"fileName,omitempty"`
 }
 
 type ProviderUpdateCallback = func(tag string) error

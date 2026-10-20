@@ -51,6 +51,10 @@ type ProviderLocalOptions struct {
 	RemoveEmojis          bool                       `json:"remove_emojis,omitempty"`
 	HealthCheck           ProviderHealthCheckOptions `json:"health_check,omitempty"`
 	OverrideDialerOptions *DialerOptions             `json:"override_dialer_options,omitempty"`
+	Exclude               *badoption.Regexp          `json:"exclude,omitempty"`
+	Include               *badoption.Regexp          `json:"include,omitempty"`
+	ExcludeTypes          badoption.Listable[string] `json:"exclude_types,omitempty"`
+	Override              ProviderOverrideOptions    `json:"override,omitempty"`
 }
 
 type ProviderRemoteOptions struct {
@@ -65,6 +69,8 @@ type ProviderRemoteOptions struct {
 	RemoveEmojis          bool                       `json:"remove_emojis,omitempty"`
 	HealthCheck           ProviderHealthCheckOptions `json:"health_check,omitempty"`
 	OverrideDialerOptions *DialerOptions             `json:"override_dialer_options,omitempty"`
+	ExcludeTypes          badoption.Listable[string] `json:"exclude_types,omitempty"`
+	Override              ProviderOverrideOptions    `json:"override,omitempty"`
 }
 
 type ProviderInlineOptions struct {
@@ -72,6 +78,22 @@ type ProviderInlineOptions struct {
 	RemoveEmojis          bool                       `json:"remove_emojis,omitempty"`
 	HealthCheck           ProviderHealthCheckOptions `json:"health_check,omitempty"`
 	OverrideDialerOptions *DialerOptions             `json:"override_dialer_options,omitempty"`
+	Override              ProviderOverrideOptions    `json:"override,omitempty"`
+}
+
+// ProviderOverrideOptions rewrites the outbounds a provider imports: their tags,
+// the detour of those that name none, and a JSON merge patch of their options.
+type ProviderOverrideOptions struct {
+	Prefix string                  `json:"prefix,omitempty"`
+	Suffix string                  `json:"suffix,omitempty"`
+	Rename []ProviderRenameOptions `json:"rename,omitempty"`
+	Detour string                  `json:"detour,omitempty"`
+	Patch  map[string]any          `json:"patch,omitempty"`
+}
+
+type ProviderRenameOptions struct {
+	Pattern *badoption.Regexp `json:"pattern"`
+	Target  string            `json:"target,omitempty"`
 }
 
 type ProviderHealthCheckOptions struct {

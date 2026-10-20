@@ -1,0 +1,765 @@
+[
+  {
+    "dns": {
+      "hosts": {
+        "cloudflare-dns.com": "1.1.1.1",
+        "dns.google": "8.8.8.8"
+      },
+      "queryStrategy": "UseIPv4",
+      "servers": [
+        "https://cloudflare-dns.com/dns-query",
+        {
+          "address": "https://cloudflare-dns.com/dns-query",
+          "domains": []
+        },
+        {
+          "address": "https://dns.google/dns-query",
+          "domains": []
+        }
+      ]
+    },
+    "inbounds": [
+      {
+        "listen": "127.0.0.1",
+        "port": 10808,
+        "protocol": "socks",
+        "settings": {
+          "auth": "noauth",
+          "udp": true,
+          "userLevel": 8
+        },
+        "sniffing": {
+          "destOverride": [
+            "http",
+            "tls",
+            "quic"
+          ],
+          "enabled": true
+        },
+        "tag": "socks"
+      },
+      {
+        "listen": "127.0.0.1",
+        "port": 11111,
+        "protocol": "dokodemo-door",
+        "settings": {
+          "address": "127.0.0.1"
+        },
+        "tag": "metrics_in"
+      }
+    ],
+    "log": {
+      "dnsLog": true,
+      "loglevel": "Warning"
+    },
+    "meta": null,
+    "metrics": {
+      "tag": "metrics_out"
+    },
+    "outbounds": [
+      {
+        "mux": {
+          "enabled": false
+        },
+        "protocol": "vless",
+        "settings": {
+          "vnext": [
+            {
+              "address": "swe.example.test",
+              "port": 443,
+              "users": [
+                {
+                  "encryption": "none",
+                  "id": "00000000-0000-4000-8000-000000000001",
+                  "level": 8,
+                  "security": "auto"
+                }
+              ]
+            }
+          ]
+        },
+        "streamSettings": {
+          "finalmask": {
+            "tcp": [
+              {
+                "settings": {
+                  "delay": "10-20",
+                  "length": "50-100",
+                  "maxSplit": "100-200",
+                  "packets": "tlshello"
+                },
+                "type": "fragment"
+              }
+            ],
+            "udp": [
+              {
+                "settings": {
+                  "noise": [
+                    {
+                      "delay": "10-16",
+                      "rand": "1-8192",
+                      "randRange": "0-255"
+                    }
+                  ]
+                },
+                "type": "noise"
+              }
+            ]
+          },
+          "network": "xhttp",
+          "security": "tls",
+          "tlsSettings": {
+            "alpn": [],
+            "fingerprint": "chrome",
+            "publicKey": "",
+            "serverName": "swe.example.test",
+            "shortId": "",
+            "show": false,
+            "spiderX": ""
+          },
+          "xhttpSettings": {
+            "extra": {
+              "mode": "packet-up",
+              "uplinkHTTPMethod": "GET",
+              "xPaddingBytes": "100-1000",
+              "xPaddingHeader": "X-Cache",
+              "xPaddingKey": "_dc",
+              "xPaddingMethod": "tokenish",
+              "xPaddingObfsMode": true,
+              "xPaddingPlacement": "queryInHeader",
+              "xmux": {
+                "cMaxReuseTimes": 0,
+                "hKeepAlivePeriod": 0,
+                "hMaxRequestTimes": "100-200",
+                "hMaxReusableSecs": "300-600",
+                "maxConcurrency": "0",
+                "maxConnections": 2
+              }
+            },
+            "host": "",
+            "mode": "packet-up",
+            "path": "/update",
+            "scMaxConcurrentPosts": 10,
+            "scMaxEachPostBytes": 1000000,
+            "scMinPostsIntervalMs": 30
+          }
+        },
+        "tag": "proxy"
+      },
+      {
+        "protocol": "freedom",
+        "settings": {
+          "domainStrategy": "UseIP"
+        },
+        "tag": "direct"
+      },
+      {
+        "protocol": "blackhole",
+        "settings": {
+          "response": {
+            "type": "http"
+          }
+        },
+        "tag": "block"
+      }
+    ],
+    "policy": {
+      "levels": {
+        "0": {
+          "statsUserDownlink": true,
+          "statsUserUplink": true
+        },
+        "8": {
+          "connIdle": 300,
+          "downlinkOnly": 1,
+          "handshake": 4,
+          "uplinkOnly": 1
+        }
+      },
+      "system": {
+        "statsInboundDownlink": true,
+        "statsInboundUplink": true,
+        "statsOutboundDownlink": true,
+        "statsOutboundUplink": true
+      }
+    },
+    "remarks": "🇸🇪SWE-xhttp",
+    "routing": {
+      "domainStrategy": "IPIfNonMatch",
+      "rules": [
+        {
+          "ip": [
+            "1.1.1.1"
+          ],
+          "outboundTag": "proxy",
+          "port": 443
+        },
+        {
+          "ip": [
+            "8.8.8.8"
+          ],
+          "outboundTag": "direct",
+          "port": 443
+        },
+        {
+          "inboundTag": [
+            "metrics_in"
+          ],
+          "outboundTag": "metrics_out"
+        },
+        {
+          "ip": [
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "169.254.0.0/16",
+            "224.0.0.0/4",
+            "255.255.255.255"
+          ],
+          "outboundTag": "direct"
+        }
+      ]
+    },
+    "stats": {}
+  },
+  {
+    "dns": {
+      "hosts": {
+        "cloudflare-dns.com": "1.1.1.1",
+        "dns.google": "8.8.8.8"
+      },
+      "queryStrategy": "UseIPv4",
+      "servers": [
+        "https://cloudflare-dns.com/dns-query",
+        {
+          "address": "https://cloudflare-dns.com/dns-query",
+          "domains": []
+        },
+        {
+          "address": "https://dns.google/dns-query",
+          "domains": []
+        }
+      ]
+    },
+    "inbounds": [
+      {
+        "listen": "127.0.0.1",
+        "port": 10808,
+        "protocol": "socks",
+        "settings": {
+          "auth": "noauth",
+          "udp": true,
+          "userLevel": 8
+        },
+        "sniffing": {
+          "destOverride": [
+            "http",
+            "tls",
+            "quic"
+          ],
+          "enabled": true
+        },
+        "tag": "socks"
+      },
+      {
+        "listen": "127.0.0.1",
+        "port": 11111,
+        "protocol": "dokodemo-door",
+        "settings": {
+          "address": "127.0.0.1"
+        },
+        "tag": "metrics_in"
+      }
+    ],
+    "log": {
+      "loglevel": "debug"
+    },
+    "metrics": {
+      "tag": "metrics_out"
+    },
+    "outbounds": [
+      {
+        "mux": {
+          "concurrency": 8,
+          "enabled": true,
+          "xudpConcurrency": 8,
+          "xudpProxyUDP443": "allow"
+        },
+        "protocol": "vless",
+        "settings": {
+          "vnext": [
+            {
+              "address": "neth.example.test",
+              "port": 443,
+              "users": [
+                {
+                  "encryption": "none",
+                  "id": "00000000-0000-4000-8000-000000000002",
+                  "level": 8,
+                  "security": "auto"
+                }
+              ]
+            }
+          ]
+        },
+        "streamSettings": {
+          "finalmask": {
+            "tcp": [
+              {
+                "settings": {
+                  "delay": "10-20",
+                  "length": "50-100",
+                  "maxSplit": "100-200",
+                  "packets": "tlshello"
+                },
+                "type": "fragment"
+              }
+            ],
+            "udp": [
+              {
+                "settings": {
+                  "noise": [
+                    {
+                      "delay": "10-16",
+                      "rand": "1-8192",
+                      "randRange": "0-255"
+                    }
+                  ]
+                },
+                "type": "noise"
+              }
+            ]
+          },
+          "network": "tcp",
+          "security": "tls",
+          "tcpSettings": {
+            "header": {
+              "type": "none"
+            }
+          },
+          "tlsSettings": {
+            "alpn": [
+              "http/1.1"
+            ],
+            "fingerprint": "",
+            "serverName": "neth.example.test",
+            "show": false
+          }
+        },
+        "tag": "proxy"
+      },
+      {
+        "protocol": "freedom",
+        "settings": {
+          "domainStrategy": "UseIP"
+        },
+        "tag": "direct"
+      },
+      {
+        "protocol": "blackhole",
+        "settings": {
+          "response": {
+            "type": "http"
+          }
+        },
+        "tag": "block"
+      }
+    ],
+    "policy": {
+      "levels": {
+        "0": {
+          "statsUserDownlink": true,
+          "statsUserUplink": true
+        },
+        "8": {
+          "connIdle": 300,
+          "downlinkOnly": 1,
+          "handshake": 4,
+          "uplinkOnly": 1
+        }
+      },
+      "system": {
+        "statsInboundDownlink": true,
+        "statsInboundUplink": true,
+        "statsOutboundDownlink": true,
+        "statsOutboundUplink": true
+      }
+    },
+    "remarks": "🇳🇱Neth-tcp",
+    "routing": {
+      "domainStrategy": "IPIfNonMatch",
+      "rules": [
+        {
+          "ip": [
+            "1.1.1.1"
+          ],
+          "outboundTag": "proxy",
+          "port": 443
+        },
+        {
+          "ip": [
+            "8.8.8.8"
+          ],
+          "outboundTag": "direct",
+          "port": 443
+        },
+        {
+          "inboundTag": [
+            "metrics_in"
+          ],
+          "outboundTag": "metrics_out"
+        },
+        {
+          "ip": [
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "169.254.0.0/16",
+            "224.0.0.0/4",
+            "255.255.255.255"
+          ],
+          "outboundTag": "direct"
+        }
+      ]
+    },
+    "stats": {}
+  },
+  {
+    "dns": {
+      "servers": [
+        "1.1.1.1",
+        "8.8.8.8",
+        {
+          "port": 53,
+          "address": "77.88.8.8",
+          "domains": [
+            "geosite:private",
+            "geosite:category-ru",
+            "domain:gstatic.com"
+          ]
+        }
+      ],
+      "queryStrategy": "UseIPv4"
+    },
+    "log": {
+      "loglevel": "warning"
+    },
+    "stats": {},
+    "policy": {
+      "levels": {
+        "8": {
+          "downlinkOnly": 2
+        }
+      },
+      "system": {
+        "statsOutboundUplink": true,
+        "statsOutboundDownlink": true
+      }
+    },
+    "routing": {
+      "rules": [
+        {
+          "port": "443",
+          "network": "udp",
+          "outboundTag": "BLOCK"
+        },
+        {
+          "protocol": [
+            "bittorrent"
+          ],
+          "outboundTag": "DIRECT"
+        },
+        {
+          "inboundTag": [
+            "BACKUP-REROUTE"
+          ],
+          "balancerTag": "BACKUP-BALANCER"
+        },
+        {
+          "ip": [
+            "1.1.1.1",
+            "8.8.8.8"
+          ],
+          "balancerTag": "FI-BALANCER"
+        },
+        {
+          "ip": [
+            "77.88.8.8"
+          ],
+          "outboundTag": "DIRECT"
+        },
+        {
+          "domain": [
+            "geosite:private"
+          ],
+          "outboundTag": "DIRECT"
+        },
+        {
+          "ip": [
+            "geoip:private"
+          ],
+          "outboundTag": "DIRECT"
+        },
+        {
+          "domain": [
+            "geosite:youtube",
+            "full:www.google.com"
+          ],
+          "balancerTag": "YOUTUBE-BALANCER"
+        },
+        {
+          "domain": [
+            "geosite:category-ru"
+          ],
+          "balancerTag": "DIRECT-BALANCER"
+        },
+        {
+          "ip": [
+            "geoip:ru"
+          ],
+          "balancerTag": "DIRECT-BALANCER"
+        },
+        {
+          "network": "tcp,udp",
+          "balancerTag": "FI-BALANCER"
+        }
+      ],
+      "balancers": [
+        {
+          "tag": "DIRECT-BALANCER",
+          "selector": [
+            "DIRECT"
+          ],
+          "strategy": {
+            "type": "leastLoad",
+            "settings": {
+              "expected": 1
+            }
+          },
+          "fallbackTag": "DIRECT"
+        },
+        {
+          "tag": "FI-BALANCER",
+          "selector": [
+            "FI"
+          ],
+          "strategy": {
+            "type": "leastLoad",
+            "settings": {
+              "expected": 1
+            }
+          },
+          "fallbackTag": "LOOP-BACKUP"
+        },
+        {
+          "tag": "YOUTUBE-BALANCER",
+          "selector": [
+            "YOUTUBE"
+          ],
+          "strategy": {
+            "type": "leastLoad",
+            "settings": {
+              "expected": 1
+            }
+          },
+          "fallbackTag": "LOOP-BACKUP"
+        },
+        {
+          "tag": "BACKUP-BALANCER",
+          "selector": [
+            "BACKUP"
+          ],
+          "strategy": {
+            "type": "leastLoad",
+            "settings": {
+              "expected": 1
+            }
+          },
+          "fallbackTag": "DIRECT"
+        }
+      ],
+      "domainStrategy": "IPIfNonMatch"
+    },
+    "inbounds": [
+      {
+        "tag": "SOCKS",
+        "port": 10808,
+        "listen": "127.0.0.1",
+        "protocol": "socks",
+        "settings": {
+          "udp": true,
+          "auth": "noauth"
+        },
+        "sniffing": {
+          "enabled": true,
+          "routeOnly": false,
+          "destOverride": [
+            "http",
+            "tls",
+            "quic"
+          ]
+        }
+      },
+      {
+        "tag": "HTTP",
+        "port": 10809,
+        "listen": "127.0.0.1",
+        "protocol": "http"
+      }
+    ],
+    "outbounds": [
+      {
+        "tag": "FI",
+        "protocol": "vless",
+        "settings": {
+          "vnext": [
+            {
+              "address": "fi.example.test",
+              "port": 443,
+              "users": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000009",
+                  "encryption": "none",
+                  "flow": "xtls-rprx-vision"
+                }
+              ]
+            }
+          ]
+        },
+        "streamSettings": {
+          "network": "tcp",
+          "tcpSettings": {},
+          "security": "reality",
+          "realitySettings": {
+            "serverName": "hel.ascella.network",
+            "publicKey": "public-key-routed",
+            "fingerprint": "firefox"
+          }
+        }
+      },
+      {
+        "tag": "YOUTUBE",
+        "protocol": "vless",
+        "settings": {
+          "vnext": [
+            {
+              "address": "fi-youtube.example.test",
+              "port": 443,
+              "users": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000009",
+                  "encryption": "none",
+                  "flow": "xtls-rprx-vision"
+                }
+              ]
+            }
+          ]
+        },
+        "streamSettings": {
+          "network": "tcp",
+          "tcpSettings": {},
+          "security": "reality",
+          "realitySettings": {
+            "serverName": "msk.ascl.dev",
+            "publicKey": "public-key-routed",
+            "fingerprint": "firefox"
+          }
+        }
+      },
+      {
+        "tag": "YOUTUBE-2",
+        "protocol": "vless",
+        "settings": {
+          "vnext": [
+            {
+              "address": "fi-youtube2.example.test",
+              "port": 443,
+              "users": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000009",
+                  "encryption": "none",
+                  "flow": "xtls-rprx-vision"
+                }
+              ]
+            }
+          ]
+        },
+        "streamSettings": {
+          "network": "tcp",
+          "tcpSettings": {},
+          "security": "reality",
+          "realitySettings": {
+            "serverName": "msk.ascl.dev",
+            "publicKey": "public-key-routed",
+            "fingerprint": "firefox"
+          }
+        }
+      },
+      {
+        "tag": "BACKUP",
+        "protocol": "vless",
+        "settings": {
+          "vnext": [
+            {
+              "address": "fi-backup.example.test",
+              "port": 443,
+              "users": [
+                {
+                  "id": "00000000-0000-4000-8000-000000000009",
+                  "encryption": "none",
+                  "flow": "xtls-rprx-vision"
+                }
+              ]
+            }
+          ]
+        },
+        "streamSettings": {
+          "network": "tcp",
+          "tcpSettings": {},
+          "security": "reality",
+          "realitySettings": {
+            "serverName": "msk.ascl.dev",
+            "publicKey": "public-key-routed",
+            "fingerprint": "firefox"
+          }
+        }
+      },
+      {
+        "tag": "DIRECT",
+        "protocol": "freedom",
+        "settings": {
+          "userLevel": 8,
+          "domainStrategy": "UseIPv4"
+        }
+      },
+      {
+        "tag": "BLOCK",
+        "protocol": "blackhole"
+      },
+      {
+        "tag": "LOOP-BACKUP",
+        "protocol": "loopback",
+        "settings": {
+          "inboundTag": "BACKUP-REROUTE"
+        }
+      }
+    ],
+    "burstObservatory": {
+      "pingConfig": {
+        "timeout": "5s",
+        "interval": "5m",
+        "sampling": 1,
+        "httpMethod": "GET",
+        "destination": "https://www.gstatic.com/generate_204",
+        "connectivity": ""
+      },
+      "subjectSelector": [
+        "DIRECT",
+        "FI",
+        "YOUTUBE",
+        "BACKUP"
+      ]
+    },
+    "remarks": "🇫🇮 Finland"
+  }
+]

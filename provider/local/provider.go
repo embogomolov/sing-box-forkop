@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/sagernet/fswatch"
@@ -13,6 +14,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/parser"
+	"github.com/sagernet/sing-box/parser/subscription"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
@@ -36,7 +38,8 @@ type ProviderLocal struct {
 	logger      log.ContextLogger
 	provider    adapter.ProviderManager
 	path        string
-	lastOutOpts []option.Outbound
+	exclude     *regexp.Regexp
+	include     *regexp.Regexp
 	lastUpdated time.Time
 	watcher     *fswatch.Watcher
 }
@@ -53,7 +56,16 @@ func NewProviderInline(ctx context.Context, router adapter.Router, logFactory lo
 	}
 	p.SetRemoveEmojis(options.RemoveEmojis)
 	p.SetOverrideDialerOptions(options.OverrideDialerOptions)
-	p.UpdateOutbounds(nil, options.Outbounds)
+	if err := p.SetOverride(options.Override); err != nil {
+		return nil, err
+	}
+	outbounds, err := p.FilterOutbounds(options.Outbounds, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.UpdateOutbounds(outbounds); err != nil {
+		return nil, err
+	}
 	return p, nil
 }
 
@@ -70,9 +82,15 @@ func NewProviderLocal(ctx context.Context, router adapter.Router, logFactory log
 		ctx:      ctx,
 		logger:   logger,
 		provider: service.FromContext[adapter.ProviderManager](ctx),
+		exclude:  (*regexp.Regexp)(options.Exclude),
+		include:  (*regexp.Regexp)(options.Include),
 	}
 	provider.SetRemoveEmojis(options.RemoveEmojis)
 	provider.SetOverrideDialerOptions(options.OverrideDialerOptions)
+	provider.SetExcludeTypes(options.ExcludeTypes)
+	if err := provider.SetOverride(options.Override); err != nil {
+		return nil, err
+	}
 	filePath := filemanager.BasePath(ctx, options.Path)
 	provider.path, _ = filepath.Abs(filePath)
 	watcher, err := fswatch.NewWatcher(fswatch.Options{
@@ -82,7 +100,6 @@ func NewProviderLocal(ctx context.Context, router adapter.Router, logFactory log
 			if uErr != nil {
 				logger.Error(E.Cause(uErr, "reload provider ", tag))
 			}
-			provider.UpdateGroups()
 		},
 	})
 	if err != nil {
@@ -97,12 +114,14 @@ func (s *ProviderLocal) Start(stage adapter.StartStage, scope *adapter.Scope) er
 		return nil
 	}
 	scope.Add(s.Close)
-	err := s.reloadFile(s.path)
-	if err != nil {
-		return err
+	if s.path != "" {
+		if err := s.reloadFile(s.path); err != nil {
+			s.logger.Error(E.Cause(err, "load provider file"))
+		}
+	} else {
+		s.UpdateGroups()
 	}
-	s.UpdateGroups()
-	err = s.Adapter.Start()
+	err := s.Adapter.Start()
 	if err != nil {
 		return err
 	}
@@ -127,12 +146,18 @@ func (s *ProviderLocal) reloadFile(path string) error {
 	if err != nil {
 		return err
 	}
-	outboundOpts, err := parser.ParseSubscription(s.ctx, string(content))
+	parsed, err := parser.ParseSubscription(s.ctx, string(content))
+	subscription.ReportSkipped(s.logger, s.Tag(), parsed)
 	if err != nil {
 		return err
 	}
-	s.UpdateOutbounds(s.lastOutOpts, outboundOpts)
-	s.lastOutOpts = outboundOpts
+	outboundOpts, err := s.FilterOutbounds(parsed.Outbounds, s.exclude, s.include)
+	if err != nil {
+		return err
+	}
+	if err := s.UpdateOutbounds(outboundOpts); err != nil {
+		return err
+	}
 	return nil
 }
 
