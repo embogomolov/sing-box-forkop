@@ -1,31 +1,19 @@
-# sing-box
+# sing-box-forkop
 
-The universal proxy platform.
+Ядро [Forkop](https://github.com/ushan0v/forkop): [sing-box](https://github.com/SagerNet/sing-box)
+с доработками для роутеров на OpenWrt.
 
-[![Packaging status](https://repology.org/badge/vertical-allrepos/sing-box.svg)](https://repology.org/project/sing-box/versions)
+## Сборка
 
-## Documentation
+Понадобятся Linux или WSL, Go 1.21 или новее и git, а для пакетов apk ещё apk-tools.
+Нужную версию Go `build.sh` скачает сам.
 
-https://sing-box.sagernet.org
-
-## License
-
+```sh
+./build.sh --arch aarch64_cortex-a53   # пакеты ipk и apk для архитектуры роутера
+./build.sh arm64 mipsle                # пакеты для выбранных целей
+./build.sh --variant full arm64        # вариант full
+./build.sh --list                      # варианты и цели
 ```
-Copyright (C) 2022 by nekohasekai <contact-sagernet@sekai.icu>
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program. If not, see <http://www.gnu.org/licenses/>.
-
-In addition, no derivative work may use the name or imply association
-with this application without prior consent.
-```
+Готовые пакеты появятся в `dist/`. Вариант full при первой сборке скачивает исходники
+cronet и тулчейн Chromium, это несколько гигабайт.
