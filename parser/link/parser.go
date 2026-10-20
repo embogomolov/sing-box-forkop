@@ -38,6 +38,8 @@ func ParseSubscriptionLink(link string) (option.Outbound, error) {
 		return parseAnyTLSLink(link)
 	case "ss":
 		return parseShadowsocksLink(link)
+	case "tt":
+		return parseTrustTunnelLink(link)
 	case "ssr":
 		// sing-box removed ShadowsocksR in 1.6.0, so naming where the protocol
 		// went beats reporting the scheme as merely unknown.

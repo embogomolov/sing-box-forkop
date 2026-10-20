@@ -64,6 +64,8 @@ func generateSubscriptionLink(outbound option.Outbound) (string, error) {
 		return generateNaiveLink(outbound)
 	case C.TypeMieru:
 		return generateMieruLink(outbound)
+	case C.TypeTrustTunnel:
+		return generateTrustTunnelLink(outbound)
 	default:
 		return "", E.New("unsupported outbound type: ", outbound.Type)
 	}
