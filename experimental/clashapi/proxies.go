@@ -29,6 +29,7 @@ func proxyRouter(server *Server, router adapter.Router) http.Handler {
 		r.Use(parseProxyName, findProxyByName(server))
 		r.Get("/", getProxy(server))
 		r.Get("/link", getProxyLink(server))
+		r.Get("/exit", getProxyExit(server))
 		r.Get("/delay", getProxyDelay(server))
 		r.Put("/", updateProxy)
 	})
