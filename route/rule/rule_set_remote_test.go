@@ -270,7 +270,7 @@ func TestRemoteRuleSetCloseWaitsForUpdate(t *testing.T) {
 	if len(ruleSet.rules) != 0 {
 		t.Fatal("rule-set update survived close")
 	}
-	if err := ruleSet.fetch(context.Background(), false); !errors.Is(err, context.Canceled) {
+	if _, err := ruleSet.fetch(context.Background(), false); !errors.Is(err, context.Canceled) {
 		t.Fatalf("rule-set accepted an update after close: %v", err)
 	}
 }
