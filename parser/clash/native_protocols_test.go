@@ -44,3 +44,26 @@ func TestLegacySnellDoesNotSilentlyChangeWireProtocol(t *testing.T) {
 	require.Empty(t, result.Outbounds)
 	require.Len(t, result.Skipped, 3)
 }
+
+func TestTrustTunnelOptions(t *testing.T) {
+	result := parse(t, `proxies:
+  - {name: h2, type: trusttunnel, server: 203.0.113.5, port: 443, username: alice, password: secret, sni: vpn.example.org, client-fingerprint: chrome, udp: true, health-check: true}
+  - {name: h3, type: trusttunnel, server: vpn.example.org, port: 8443, username: alice, password: secret, quic: true, congestion-controller: new_reno, client-fingerprint: chrome, max-connections: 4}
+  - {name: renamed, type: trusttunnel, server: vpn.example.org, port: 443, username: alice, password: secret, name-cert-verify: other.example.org}
+  - {name: anonymous, type: trusttunnel, server: vpn.example.org, port: 443, username: alice}
+`)
+	require.Len(t, result.Outbounds, 2)
+	require.Len(t, result.Skipped, 2)
+	h2 := result.Outbounds[0].Options.(*option.TrustTunnelOutboundOptions)
+	require.Equal(t, "203.0.113.5", h2.Server)
+	require.Equal(t, "vpn.example.org", h2.TLS.ServerName)
+	require.Equal(t, "chrome", h2.TLS.UTLS.Fingerprint)
+	require.Empty(t, h2.Network)
+	require.True(t, h2.HealthCheck)
+	require.False(t, h2.QUIC)
+	h3 := result.Outbounds[1].Options.(*option.TrustTunnelOutboundOptions)
+	require.True(t, h3.QUIC)
+	require.Equal(t, "reno", h3.QUICCongestionControl)
+	require.Nil(t, h3.TLS.UTLS)
+	require.Equal(t, "tcp", string(h3.Network))
+}

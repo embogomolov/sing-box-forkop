@@ -48,6 +48,8 @@ func proxyTypes(proxyType string) (string, proxyOptions, bool) {
 		return C.TypeHTTP, &httpOptions{}, true
 	case "ssh":
 		return C.TypeSSH, &sshOptions{}, true
+	case "trusttunnel":
+		return C.TypeTrustTunnel, &trustTunnelOptions{}, true
 	}
 	return "", nil, false
 }
