@@ -168,3 +168,5 @@ replace github.com/sagernet/wireguard-go => ./third_party/wireguard-go
 replace github.com/sagernet/gvisor => ./third_party/gvisor
 
 replace github.com/sagernet/sing-openvpn => ./third_party/sing-openvpn
+
+replace github.com/sagernet/sing-vmess => ./third_party/sing-vmess
