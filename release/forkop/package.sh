@@ -11,7 +11,7 @@ URL=https://github.com/ushan0v/sing-box-forkop
 MAINTAINER=ushan0v
 LICENSE=GPL-3.0-or-later
 DEPENDS=(ca-bundle)
-CONFLICTS=(sing-box sing-box-extended)
+CONFLICTS=(sing-box sing-box-extended podkop-engine podkop-engine-full)
 CONFFILES=(/etc/config/sing-box /etc/sing-box/config.json)
 
 usage() {
@@ -143,6 +143,8 @@ build_apk() {
     --info "provides:sing-box" \
     --info "replaces:${CONFLICTS[*]}" \
     --info "provider-priority:100" \
+    --script "post-install:$PROJECT/release/config/openwrt.postinst" \
+    --script "post-upgrade:$PROJECT/release/config/openwrt.postinst" \
     --script "pre-deinstall:$PROJECT/release/config/openwrt.prerm" \
     --files "$ROOT" \
     --output "$ASSET.apk"

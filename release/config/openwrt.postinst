@@ -1,0 +1,19 @@
+#!/bin/sh
+# apk keeps an /etc/init.d/sing-box that was edited or that no package owns and installs ours
+# beside it as .apk-new; Forkop needs ours, which reloads the core with SIGHUP.
+[ -z "${IPKG_INSTROOT}" ] || exit 0
+new=/etc/init.d/sing-box.apk-new
+[ -f "$new" ] || exit 0
+old=/etc/sing-box/sing-box.init.before-sing-box-forkop kept=""
+mkdir -p /etc/sing-box
+if [ -f /etc/init.d/sing-box ] && mv -f /etc/init.d/sing-box "$old"; then
+	chmod 0644 "$old"
+	kept=", the old one is $old"
+fi
+if mv -f "$new" /etc/init.d/sing-box; then
+	logger -t sing-box-forkop "/etc/init.d/sing-box was not the one of the package and apk kept it: replaced$kept"
+else
+	[ -z "$kept" ] || mv -f "$old" /etc/init.d/sing-box
+	logger -t sing-box-forkop "/etc/init.d/sing-box is not the one of the package and could not be replaced by $new"
+fi
+exit 0
