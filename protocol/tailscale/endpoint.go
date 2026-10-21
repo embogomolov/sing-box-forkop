@@ -894,6 +894,7 @@ func (t *Endpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.
 	metadata.Inbound = t.Tag()
 	metadata.InboundType = t.Type()
 	metadata.Source = source
+	metadata.User = t.peerName(source.Addr)
 	destinationAddress := tsaddr.UnmapVia(destination.Addr)
 	if destinationAddress != destination.Addr {
 		destination.Addr = destinationAddress
@@ -917,6 +918,7 @@ func (t *Endpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
 	metadata.Inbound = t.Tag()
 	metadata.InboundType = t.Type()
 	metadata.Source = source
+	metadata.User = t.peerName(source.Addr)
 	originDestination := destination
 	destinationAddress := tsaddr.UnmapVia(destination.Addr)
 	if destinationAddress != destination.Addr {
@@ -961,6 +963,20 @@ func (t *Endpoint) PreferredDomain(metadata *adapter.InboundContext, domain stri
 		}
 	}
 	return !strings.Contains(domain, ".") && t.searchDomains.Load()
+}
+
+// peerName is the tailnet's name of the peer a flow comes from, reported as its user so that
+// rules can match a device with auth_user.
+func (t *Endpoint) peerName(address netip.Addr) string {
+	address = address.Unmap()
+	if !t.started.Load() || !tsaddr.IsTailscaleIP(address) {
+		return ""
+	}
+	peer, found := t.server.ExportLocalBackend().PeerForIP(address)
+	if !found || peer.IsSelf {
+		return ""
+	}
+	return peer.Node.ComputedName()
 }
 
 func (t *Endpoint) PreferredAddress(metadata *adapter.InboundContext, address netip.Addr) bool {
@@ -1080,6 +1096,7 @@ func (t *peerDNSQueryHandler) HandlePeerDNSQuery(ctx context.Context, query []by
 	metadata.Inbound = t.Tag()
 	metadata.InboundType = t.Type()
 	metadata.Source = M.SocksaddrFromNetIP(sourceAddress)
+	metadata.User = (*Endpoint)(t).peerName(sourceAddress.Addr())
 	response, err := t.dnsRouter.Exchange(adapter.WithContext(ctx, &metadata), &message, adapter.DNSQueryOptions{})
 	if err != nil {
 		if !R.IsRejected(err) && !E.IsClosedOrCanceled(err) {
