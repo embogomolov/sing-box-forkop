@@ -233,7 +233,14 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 		return nil
 	}
 	peer.handshake.lastSentHandshake = time.Now()
+	unanswered := peer.handshake.state == handshakeInitiationCreated
 	peer.handshake.mutex.Unlock()
+
+	// Under steady traffic new packets, not the retry timer, send an unanswered
+	// initiation again; the path is as suspect either way.
+	if unanswered {
+		peer.markEndpointSrcForClearing()
+	}
 
 	peer.device.log.Verbosef("%v - Sending handshake initiation", peer)
 
