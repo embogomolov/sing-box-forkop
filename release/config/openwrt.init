@@ -23,6 +23,9 @@ start_service() {
   procd_set_param limits core="unlimited"
   procd_set_param limits nofile="1000000 1000000"
   procd_set_param term_timeout 10
+  # Tailscale's control client tries Noise over plain HTTP on port 80 first; Russian DPI passes
+  # the upgrade and then stalls the stream for good, so the node drops off its tailnet
+  procd_set_param env TS_FORCE_NOISE_443=1
   # procd's default threshold of an hour counts crashes hours apart as one loop and gives up
   # for good on the sixth; only crashes less than 10 minutes apart count
   procd_set_param respawn 600 5 5
