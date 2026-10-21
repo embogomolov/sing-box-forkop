@@ -61,7 +61,7 @@ for variant in $(bash build.sh --print-variants) required; do
         tags=$(bash build.sh --variant "$variant" --print-tags)
     fi
     cgo=0
-    [[ ",$tags," != *,with_naive_outbound,* ]] || cgo=1
+    [[ ",$tags," != *,with_naive,* ]] || cgo=1
     while read -r _ goenv; do
         # shellcheck disable=SC2086
         list_pass "$tags" "$cgo" $goenv &
@@ -133,7 +133,7 @@ done
 
 # A reachable function that looks a method up by an index or a computed name makes the
 # linker keep every exported method of every reachable type, megabytes no build runs.
-tags=$(bash build.sh --variant full --tags -with_naive_outbound --print-tags)
+tags=$(bash build.sh --variant full --tags -with_naive --print-tags)
 if env GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags "$tags" -ldflags "-checklinkname=0 -dumpdep" \
     -o /dev/null ./cmd/sing-box 2> "$work/dumpdep"; then
     while read -r function; do

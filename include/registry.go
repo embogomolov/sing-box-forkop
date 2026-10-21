@@ -27,7 +27,6 @@ import (
 	"github.com/sagernet/sing-box/protocol/group"
 	"github.com/sagernet/sing-box/protocol/http"
 	"github.com/sagernet/sing-box/protocol/mixed"
-	"github.com/sagernet/sing-box/protocol/naive"
 	"github.com/sagernet/sing-box/protocol/parser"
 	"github.com/sagernet/sing-box/protocol/redirect"
 	"github.com/sagernet/sing-box/protocol/shadowsocks"
@@ -58,7 +57,7 @@ func InboundRegistry() *inbound.Registry {
 	registerSnellInbound(registry)
 	registerVMessInbound(registry)
 	trojan.RegisterInbound(registry)
-	naive.RegisterInbound(registry)
+	registerNaiveInbound(registry)
 	registerShadowTLSInbound(registry)
 	vless.RegisterInbound(registry)
 	registerAnyTLSInbound(registry)

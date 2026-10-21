@@ -23,7 +23,7 @@ REQUIRED_TAGS=(with_clash_api with_utls badlinkname tfogo_checklinkname0)
 OPTIONAL_TAGS=(
   with_gvisor with_quic with_wireguard with_openvpn with_trusttunnel
   with_vmess with_snell with_ssh with_shadowtls with_tor with_anytls
-  with_tailscale with_naive_outbound with_openconnect with_mieru
+  with_tailscale with_naive with_openconnect with_mieru
 )
 BASE_TAGS=(
   with_gvisor with_quic with_wireguard with_openvpn with_trusttunnel
@@ -294,7 +294,7 @@ build_binary() {
   local -a build_env=(GOOS=linux "GOTOOLCHAIN=$GO_TOOLCHAIN") go_env
   read -r -a go_env <<< "$(target_go_env "$target")"
   build_env+=("${go_env[@]}")
-  if [[ ",$build_tags," == *,with_naive_outbound,* ]]; then
+  if [[ ",$build_tags," == *,with_naive,* ]]; then
     build_tags="$build_tags,with_musl"
     while IFS= read -r variable; do
       build_env+=("$variable")
@@ -422,7 +422,7 @@ if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
 fi
 export SOURCE_DATE_EPOCH
 acquire_build_lock
-[[ ",$TAGS," != *,with_naive_outbound,* ]] || ensure_cronet_go
+[[ ",$TAGS," != *,with_naive,* ]] || ensure_cronet_go
 
 for target in "${SELECTED[@]}"; do
   build_target "$target"

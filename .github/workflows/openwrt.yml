@@ -56,7 +56,7 @@ jobs:
       - name: Test
         run: |
           set -euo pipefail
-          tags=$(./build.sh --print-tags --variant full --tags -with_naive_outbound)
+          tags=$(./build.sh --print-tags --variant full --tags -with_naive)
           go list ./... | grep -v '^github.com/sagernet/sing-box/common/netns$' |
             xargs go test -tags "$tags" -ldflags=-checklinkname=0
           # Ubuntu's namespace restrictions require privileges for this test.
@@ -148,7 +148,7 @@ jobs:
           tags=$(./build.sh --print-tags "${args[@]}")
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
           case ",$tags," in
-            *,with_naive_outbound,*) echo "naive=1" >> "$GITHUB_OUTPUT" ;;
+            *,with_naive,*) echo "naive=1" >> "$GITHUB_OUTPUT" ;;
             *) echo "naive=0" >> "$GITHUB_OUTPUT" ;;
           esac
 
