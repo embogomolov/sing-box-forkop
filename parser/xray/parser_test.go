@@ -269,6 +269,15 @@ func TestXrayReadsTheFingerprintAsXrayDoes(t *testing.T) {
 	}
 }
 
+func TestXrayReadsVerifyPeerCertByName(t *testing.T) {
+	result := parse(t, `{"outbounds": [{"protocol": "vless", "tag": "vcn",
+		"settings": {"vnext": [{"address": "a.example.test", "port": 443, "users": [{"id": "uuid"}]}]},
+		"streamSettings": {"security": "tls", "tlsSettings": {"serverName": "front.example", "verifyPeerCertByName": "real.example, other.example"}}}]}`)
+	if names := vless(t, result, 0).TLS.VerifyServerName; strings.Join(names, " ") != "real.example other.example" {
+		t.Errorf("verify_server_name %q", names)
+	}
+}
+
 func TestXrayReadsTheDownloadLegOfXHTTP(t *testing.T) {
 	result := parse(t, `{"outbounds": [{"protocol": "vless", "tag": "split",
 		"settings": {"vnext": [{"address": "up.example", "port": 443, "users": [{"id": "uuid"}]}]},

@@ -192,6 +192,13 @@ func newSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddres
 		}
 		tlsConfig.RootCAs = certPool
 	}
+	if len(options.VerifyServerName) > 0 && !options.Insecure {
+		if len(options.CertificatePublicKeySHA256) > 0 {
+			return nil, E.New("verify_server_name is conflict with certificate_public_key_sha256")
+		}
+		tlsConfig.InsecureSkipVerify = true
+		tlsConfig.VerifyPeerCertificate = verifyByServerName(tlsConfig.RootCAs, tlsConfig.Time, options.VerifyServerName)
+	}
 	var clientCertificate []byte
 	if len(options.ClientCertificate) > 0 {
 		clientCertificate = []byte(strings.Join(options.ClientCertificate, "\n"))
@@ -236,7 +243,7 @@ func newSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddres
 		config:                &tlsConfig,
 		serverName:            serverName,
 		disableSNI:            options.DisableSNI,
-		verifyServerName:      options.DisableSNI && !options.Insecure,
+		verifyServerName:      options.DisableSNI && !options.Insecure && len(options.VerifyServerName) == 0,
 		handshakeTimeout:      handshakeTimeout,
 		fragment:              options.Fragment,
 		fragmentFallbackDelay: time.Duration(options.FragmentFallbackDelay),
@@ -272,6 +279,33 @@ func verifyConnection(rootCAs *x509.CertPool, timeFunc func() time.Time, serverN
 			return errMissingServerName
 		}
 		return verifySystemTLSPeer(rootCAs, serverName, timeFunc, state.PeerCertificates)
+	}
+}
+
+// verifyByServerName verifies the chain as the default verification does, but accepts a leaf
+// valid for any of serverNames instead of the name the client sends, as Xray-core's
+// verifyPeerCertByName.
+func verifyByServerName(rootCAs *x509.CertPool, timeFunc func() time.Time, serverNames []string) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		certificates := make([]*x509.Certificate, 0, len(rawCerts))
+		for _, rawCert := range rawCerts {
+			certificate, err := x509.ParseCertificate(rawCert)
+			if err != nil {
+				return E.Cause(err, "parse peer certificate")
+			}
+			certificates = append(certificates, certificate)
+		}
+		err := verifySystemTLSPeer(rootCAs, "", timeFunc, certificates)
+		if err != nil {
+			return err
+		}
+		for _, serverName := range serverNames {
+			err = certificates[0].VerifyHostname(serverName)
+			if err == nil {
+				return nil
+			}
+		}
+		return err
 	}
 }
 

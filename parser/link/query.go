@@ -165,6 +165,9 @@ func linkTLS(q query, serverName string, always bool) (*option.OutboundTLSOption
 			PublicKey: q.get("pbk", "public-key"),
 			ShortID:   q.get("sid", "short-id"),
 		}
+	} else if names := q.list("vcn"); len(names) != 0 {
+		// Xray-core's verifyPeerCertByName
+		tls.VerifyServerName = badoption.Listable[string](names)
 	}
 	return tls, nil
 }

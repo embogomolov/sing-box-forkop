@@ -210,6 +210,38 @@ func TestLinkXHTTPDownloadLeg(t *testing.T) {
 	}
 }
 
+// vcn, Xray-core's verifyPeerCertByName, names what the certificate is verified by instead of
+// the SNI; REALITY verifies its own way.
+func TestLinkVerifyServerName(t *testing.T) {
+	base := "vless://" + xrayTestUUID + "@example.org:443?sni=front.example&vcn=real.example,%20other.example"
+	if names := parsedVLESS(t, base+"&security=tls#n").TLS.VerifyServerName; strings.Join(names, " ") != "real.example other.example" {
+		t.Errorf("VLESS: %q", names)
+	}
+	if names := parsedVLESS(t, base+"&security=reality&pbk=k#n").TLS.VerifyServerName; len(names) != 0 {
+		t.Errorf("REALITY took %q", names)
+	}
+	outbound, err := ParseSubscriptionLink("hysteria2://secret@example.org:443?sni=front.example&vcn=real.example#n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := outbound.Options.(*option.Hysteria2OutboundOptions).TLS.VerifyServerName; strings.Join(names, " ") != "real.example" {
+		t.Errorf("Hysteria2: %q", names)
+	}
+	payload := base64.RawStdEncoding.EncodeToString([]byte(`{"v":"2","ps":"n","add":"example.org","port":"443","id":"` + xrayTestUUID + `","net":"tcp","tls":"tls","sni":"front.example","vcn":"real.example"}`))
+	outbound, err = ParseSubscriptionLink("vmess://" + payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := outbound.Options.(*option.VMessOutboundOptions).TLS.VerifyServerName; strings.Join(names, " ") != "real.example" {
+		t.Errorf("VMess: %q", names)
+	}
+	extra := url.QueryEscape(`{"downloadSettings":{"address":"down.example","port":443,"security":"tls","tlsSettings":{"serverName":"front.example","verifyPeerCertByName":"real.example"}}}`)
+	download := parsedVLESS(t, "vless://"+xrayTestUUID+"@up.example:443?security=tls&type=xhttp&path=%2Fx&mode=packet-up&extra="+extra+"#n").Transport.XHTTPOptions.Download
+	if names := download.TLS.VerifyServerName; strings.Join(names, " ") != "real.example" {
+		t.Errorf("XHTTP download leg: %q", names)
+	}
+}
+
 // A fingerprint is a Client Hello of TCP: an XHTTP leg over HTTP/3 has none, or every dial fails.
 func TestLinkXHTTPOverHTTP3HasNoFingerprint(t *testing.T) {
 	extra := url.QueryEscape(`{"downloadSettings":{"address":"down.example","port":443,"security":"tls","tlsSettings":{"alpn":["h3"],"fingerprint":"chrome"}}}`)

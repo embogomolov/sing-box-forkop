@@ -461,6 +461,8 @@ func parseTLS(stream streamSettings) (*option.OutboundTLSOptions, error) {
 			PublicKey: publicKey,
 			ShortID:   settings.ShortID,
 		}
+	} else {
+		tls.VerifyServerName = badoption.Listable[string](settings.VerifyPeerCertByName)
 	}
 	return tls, nil
 }

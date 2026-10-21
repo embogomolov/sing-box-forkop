@@ -38,6 +38,7 @@ type vmessPayload struct {
 	Insecure           subscription.Bool       `json:"insecure"`
 	AllowInsecure      subscription.Bool       `json:"allowInsecure"`
 	SkipCertVerify     subscription.Bool       `json:"skip-cert-verify"`
+	VerifyServerName   subscription.StringList `json:"vcn"`
 	PacketEncoding     subscription.String     `json:"packet_encoding"`
 	PacketEncodingCaml subscription.String     `json:"packetEncoding"`
 	XUDP               subscription.Bool       `json:"xudp"`
@@ -162,10 +163,11 @@ func vmessTLS(payload vmessPayload) (*option.OutboundTLSOptions, error) {
 		return nil, nil
 	}
 	tls := &option.OutboundTLSOptions{
-		Enabled:    true,
-		ServerName: string(payload.Add),
-		Insecure:   payload.Insecure.Value() || payload.AllowInsecure.Value() || payload.SkipCertVerify.Value(),
-		ALPN:       badoption.Listable[string](payload.ALPN),
+		Enabled:          true,
+		ServerName:       string(payload.Add),
+		Insecure:         payload.Insecure.Value() || payload.AllowInsecure.Value() || payload.SkipCertVerify.Value(),
+		ALPN:             badoption.Listable[string](payload.ALPN),
+		VerifyServerName: badoption.Listable[string](payload.VerifyServerName),
 	}
 	if payload.SNI != "" {
 		tls.ServerName = string(payload.SNI)

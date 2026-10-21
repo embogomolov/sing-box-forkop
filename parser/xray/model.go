@@ -96,14 +96,15 @@ type hysteriaSettings struct {
 }
 
 type tlsSettings struct {
-	ServerName    string                  `json:"serverName"`
-	ALPN          subscription.StringList `json:"alpn"`
-	AllowInsecure subscription.Bool       `json:"allowInsecure"`
-	Fingerprint   string                  `json:"fingerprint"`
-	ECHConfigList string                  `json:"echConfigList"`
-	PublicKey     string                  `json:"publicKey"`
-	Password      string                  `json:"password"`
-	ShortID       string                  `json:"shortId"`
+	ServerName           string                  `json:"serverName"`
+	ALPN                 subscription.StringList `json:"alpn"`
+	AllowInsecure        subscription.Bool       `json:"allowInsecure"`
+	VerifyPeerCertByName subscription.StringList `json:"verifyPeerCertByName"`
+	Fingerprint          string                  `json:"fingerprint"`
+	ECHConfigList        string                  `json:"echConfigList"`
+	PublicKey            string                  `json:"publicKey"`
+	Password             string                  `json:"password"`
+	ShortID              string                  `json:"shortId"`
 }
 
 type websocketSettings struct {

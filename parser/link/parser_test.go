@@ -371,6 +371,38 @@ func TestGenerateSubscriptionLinkRoundTrip(t *testing.T) {
 	}
 }
 
+func TestGenerateSubscriptionLinkWritesVerifyServerName(t *testing.T) {
+	tls := func() *option.OutboundTLSOptions {
+		return &option.OutboundTLSOptions{Enabled: true, ServerName: "front.example", VerifyServerName: []string{"real.example", "other.example"}}
+	}
+	for _, outbound := range []option.Outbound{
+		{Type: C.TypeTrojan, Tag: "Trojan", Options: &option.TrojanOutboundOptions{
+			ServerOptions: option.ServerOptions{Server: "trojan.example", ServerPort: 443}, Password: "secret",
+			OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: tls()},
+		}},
+		{Type: C.TypeVMess, Tag: "VMess", Options: &option.VMessOutboundOptions{
+			ServerOptions: option.ServerOptions{Server: "vmess.example", ServerPort: 443}, UUID: "00000000-0000-4000-8000-000000000002", Security: "auto",
+			OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: tls()},
+		}},
+		{Type: C.TypeVLESS, Tag: "VLESS XHTTP", Options: &option.VLESSOutboundOptions{
+			ServerOptions: option.ServerOptions{Server: "up.example", ServerPort: 443}, UUID: "00000000-0000-4000-8000-000000000006",
+			OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: &option.OutboundTLSOptions{Enabled: true, ServerName: "up.example"}},
+			Transport: &option.V2RayTransportOptions{Type: C.V2RayTransportTypeXHTTP, XHTTPOptions: option.V2RayXHTTPOptions{
+				Mode:                  "stream-up",
+				V2RayXHTTPBaseOptions: option.V2RayXHTTPBaseOptions{Path: "/up"},
+				Download: &option.V2RayXHTTPDownloadOptions{
+					ServerOptions:               option.ServerOptions{Server: "down.example", ServerPort: 443},
+					OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: tls()},
+				},
+			}},
+		}},
+	} {
+		t.Run(outbound.Tag, func(t *testing.T) {
+			testLinkRoundTrip(t, outbound)
+		})
+	}
+}
+
 func testLinkRoundTrip(t *testing.T, outbound option.Outbound) {
 	t.Helper()
 	generated, err := GenerateSubscriptionLink(outbound)

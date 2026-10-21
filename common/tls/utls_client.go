@@ -289,6 +289,13 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 		}
 		tlsConfig.RootCAs = certPool
 	}
+	if len(options.VerifyServerName) > 0 && !options.Insecure {
+		if len(options.CertificatePublicKeySHA256) > 0 {
+			return nil, E.New("verify_server_name is conflict with certificate_public_key_sha256")
+		}
+		tlsConfig.InsecureSkipVerify = true
+		tlsConfig.VerifyPeerCertificate = verifyByServerName(tlsConfig.RootCAs, tlsConfig.Time, options.VerifyServerName)
+	}
 	var clientCertificate []byte
 	if len(options.ClientCertificate) > 0 {
 		clientCertificate = []byte(strings.Join(options.ClientCertificate, "\n"))
@@ -337,7 +344,7 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 		config:                &tlsConfig,
 		serverName:            serverName,
 		disableSNI:            options.DisableSNI,
-		verifyServerName:      options.DisableSNI && !options.Insecure,
+		verifyServerName:      options.DisableSNI && !options.Insecure && len(options.VerifyServerName) == 0,
 		handshakeTimeout:      handshakeTimeout,
 		id:                    id,
 		fragment:              options.Fragment,

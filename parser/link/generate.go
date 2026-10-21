@@ -452,6 +452,9 @@ func generateVMessLink(outbound option.Outbound) (string, error) {
 		if options.TLS.Insecure {
 			payload["insecure"] = "1"
 		}
+		if len(options.TLS.VerifyServerName) != 0 {
+			payload["vcn"] = strings.Join(options.TLS.VerifyServerName, ",")
+		}
 	}
 	if err := addVMessTransport(payload, options.Transport); err != nil {
 		return "", err
@@ -764,6 +767,9 @@ func addTLSQuery(query url.Values, tls *option.OutboundTLSOptions, includeSecuri
 	if tls.Insecure {
 		query.Set("insecure", "1")
 	}
+	if len(tls.VerifyServerName) != 0 {
+		query.Set("vcn", strings.Join(tls.VerifyServerName, ","))
+	}
 	if len(tls.ALPN) != 0 {
 		query.Set("alpn", strings.Join(tls.ALPN, ","))
 	}
@@ -925,6 +931,9 @@ func xhttpDownloadExtra(mode string, download *option.V2RayXHTTPDownloadOptions)
 	}
 	if tls.Insecure {
 		security["allowInsecure"] = true
+	}
+	if len(tls.VerifyServerName) != 0 {
+		security["verifyPeerCertByName"] = strings.Join(tls.VerifyServerName, ",")
 	}
 	leg["security"], leg["tlsSettings"] = "tls", security
 	return leg, nil
