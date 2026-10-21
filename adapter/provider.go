@@ -33,6 +33,12 @@ type ProviderSubscriptionMetadata interface {
 	SubscriptionMetadata() SubscriptionMetadata
 }
 
+type ProviderFilterCandidates interface {
+	// FilterCandidates returns the outbound tags the provider's name filters chose from in the
+	// last parsed content, in its order, so a filter can be edited against all of them.
+	FilterCandidates() []string
+}
+
 type ProviderOutboundLink interface {
 	// OutboundLink returns a share link for one of the provider outbounds. The
 	// second result reports whether the provider owns the tag, the error why no

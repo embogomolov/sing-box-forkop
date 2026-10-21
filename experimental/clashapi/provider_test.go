@@ -24,6 +24,26 @@ func (p *testSubscriptionProvider) SubscriptionMetadata() adapter.SubscriptionMe
 	return adapter.SubscriptionMetadata{Title: "Example", SupportURL: "https://example.com/support"}
 }
 
+func (p *testSubscriptionProvider) FilterCandidates() []string {
+	return []string{"US Keep", "US Skip"}
+}
+
+func TestProviderInfoIncludesFilterCandidates(t *testing.T) {
+	content, err := json.Marshal(providerInfo(&Server{}, &testSubscriptionProvider{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		FilterCandidates []string `json:"filterCandidates"`
+	}
+	if err = json.Unmarshal(content, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.FilterCandidates) != 2 || response.FilterCandidates[1] != "US Skip" {
+		t.Fatalf("filter candidates missing from provider API: %s", content)
+	}
+}
+
 func TestProviderInfoIncludesSubscriptionMetadata(t *testing.T) {
 	content, err := json.Marshal(providerInfo(&Server{}, &testSubscriptionProvider{}))
 	if err != nil {

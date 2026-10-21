@@ -61,6 +61,9 @@ func providerInfo(server *Server, p adapter.Provider) *badjson.JSONObject {
 	if p, ok := p.(adapter.ProviderSubscriptionMetadata); ok {
 		info.Put("subscriptionMetadata", p.SubscriptionMetadata())
 	}
+	if p, ok := p.(adapter.ProviderFilterCandidates); ok {
+		info.Put("filterCandidates", p.FilterCandidates())
+	}
 	return &info
 }
 

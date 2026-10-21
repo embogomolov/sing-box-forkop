@@ -119,6 +119,23 @@ func TestFilterOutbounds(t *testing.T) {
 	}
 }
 
+func TestFilterOutboundsKeepsTheTagsTheNameFiltersChoseFrom(t *testing.T) {
+	provider := newTagOverrideProvider(t, option.ProviderOverrideOptions{Prefix: "US "})
+	provider.SetExcludeTypes([]string{C.TypeTrojan})
+	_, err := provider.FilterOutbounds([]option.Outbound{
+		{Tag: "Keep"},
+		{Tag: "Skip"},
+		{Type: C.TypeTrojan, Tag: "Excluded type"},
+		{Tag: "Keep"},
+	}, regexp.MustCompile(`Skip`), regexp.MustCompile(`Nothing`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expected := []string{"US Keep", "US Skip", "US Keep #2"}; !reflect.DeepEqual(provider.FilterCandidates(), expected) {
+		t.Fatalf("unexpected filter candidates: %v", provider.FilterCandidates())
+	}
+}
+
 func TestFilterOutboundsExcludesTypes(t *testing.T) {
 	provider := newTagOverrideProvider(t, option.ProviderOverrideOptions{})
 	provider.SetExcludeTypes([]string{" Shadowsocks ", "", "TROJAN"})

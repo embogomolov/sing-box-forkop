@@ -47,6 +47,7 @@ type Adapter struct {
 	outboundSources    map[string]option.Outbound
 	outboundCloseOrder []string
 	outboundOpts       []option.Outbound
+	filterCandidates   []string
 	excludeTypes       map[string]bool
 	override           *override
 }
@@ -144,6 +145,12 @@ func (a *Adapter) Outbound(tag string) (adapter.Outbound, bool) {
 	return detour, ok
 }
 
+func (a *Adapter) FilterCandidates() []string {
+	a.access.RLock()
+	defer a.access.RUnlock()
+	return append([]string{}, a.filterCandidates...)
+}
+
 func (a *Adapter) OutboundLink(tag string) (string, bool, error) {
 	a.access.RLock()
 	source, loaded := a.outboundSources[tag]
@@ -200,6 +207,8 @@ func (a *Adapter) UpdateOutbounds(newOpts []option.Outbound) error {
 
 // FilterOutbounds rewrites the imported outbounds with the provider override
 // and then applies the name filters, so a filter matches what the user sees.
+// The tags the filters chose from are kept as the filter candidates, also
+// when the filters leave nothing to publish.
 func (a *Adapter) FilterOutbounds(opts []option.Outbound, exclude *regexp.Regexp, include *regexp.Regexp) ([]option.Outbound, error) {
 	opts, excludedTags := a.filterOutboundTypes(opts)
 	opts = cloneOutbounds(FilterInvalidOutbounds(opts, excludedTags))
@@ -217,6 +226,13 @@ func (a *Adapter) FilterOutbounds(opts []option.Outbound, exclude *regexp.Regexp
 		opts[index] = patched
 	}
 	normalizeOutboundTags(opts, a.removeEmojis, a.override)
+	candidates := make([]string, 0, len(opts))
+	for _, outbound := range opts {
+		candidates = append(candidates, outbound.Tag)
+	}
+	a.access.Lock()
+	a.filterCandidates = candidates
+	a.access.Unlock()
 	if exclude == nil && include == nil {
 		return opts, nil
 	}
@@ -340,6 +356,7 @@ func (a *Adapter) Close() error {
 	a.outboundSources = nil
 	a.outboundCloseOrder = nil
 	a.outboundOpts = nil
+	a.filterCandidates = nil
 	a.access.Unlock()
 	var err error
 	for index := len(closeOrder) - 1; index >= 0; index-- {
