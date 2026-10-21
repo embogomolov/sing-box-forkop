@@ -6,8 +6,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"io"
 	"net"
 	"net/netip"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -162,19 +164,15 @@ func handshakeCompleted(endpoint *Endpoint) bool {
 		!strings.Contains(state, "last_handshake_time_sec=0\n")
 }
 
-// A peer known by a name that has an IPv6 address the proxy cannot reach: led
-// through the proxy it must still come up, since the proxy resolves the name.
-func TestClientBindDialsLonePeerByNameThroughDetour(t *testing.T) {
-	ctx := pause.WithDefaultManager(context.Background())
+func startTestServer(t *testing.T, ctx context.Context, clientPublic string) (string, uint16) {
+	t.Helper()
 	serverPrivate, serverPublic := testKeyPair(t)
-	clientPrivate, clientPublic := testKeyPair(t)
 	probe, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	port := uint16(probe.LocalAddr().(*net.UDPAddr).Port)
 	probe.Close()
-
 	startTestEndpoint(t, EndpointOptions{
 		Context:    ctx,
 		Logger:     logger.NOP(),
@@ -187,6 +185,203 @@ func TestClientBindDialsLonePeerByNameThroughDetour(t *testing.T) {
 			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("10.77.0.2/32")},
 		}},
 	}, false)
+	return serverPublic, port
+}
+
+// startTestClient reaches the server as wg.test through dialer, as WARP does.
+func startTestClient(t *testing.T, ctx context.Context, dialer N.Dialer, clientPrivate string, serverPublic string, port uint16) *Endpoint {
+	t.Helper()
+	return startTestEndpoint(t, EndpointOptions{
+		Context:    ctx,
+		Logger:     logger.NOP(),
+		Dialer:     dialer,
+		Address:    []netip.Prefix{netip.MustParsePrefix("10.77.0.2/32")},
+		PrivateKey: clientPrivate,
+		Peers: []PeerOptions{{
+			Endpoint:   M.ParseSocksaddrHostPort("wg.test", port),
+			PublicKey:  serverPublic,
+			AllowedIPs: []netip.Prefix{netip.MustParsePrefix("10.77.0.1/32")},
+		}},
+	}, true)
+}
+
+var serverAddress = M.ParseSocksaddrHostPort("10.77.0.1", 9)
+
+// sendThrough sends from an unconnected socket, which a port unreachable spares.
+func sendThrough(t *testing.T, packetConn net.PacketConn) {
+	t.Helper()
+	if _, err := packetConn.WriteTo([]byte{0}, serverAddress.UDPAddr()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sessionProxy is a detour over a stream, a session per dial. Like Xray's mux it
+// ends a session that carried nothing after endAfter; with blackholeFirst the
+// first one swallows everything, as a connection a NAT on the way forgot.
+type sessionProxy struct {
+	endAfter       time.Duration
+	blackholeFirst bool
+	dials          atomic.Int32
+}
+
+func (d *sessionProxy) DialContext(_ context.Context, _ string, destination M.Socksaddr) (net.Conn, error) {
+	dial := d.dials.Add(1)
+	udpConn, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(destination.Port)})
+	if err != nil {
+		return nil, err
+	}
+	session := &proxySession{Conn: udpConn, dead: d.blackholeFirst && dial == 1, closed: make(chan struct{})}
+	if d.endAfter > 0 {
+		time.AfterFunc(d.endAfter, session.endIfUnused)
+	}
+	return session, nil
+}
+
+func (d *sessionProxy) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
+	return nil, os.ErrInvalid
+}
+
+type proxySession struct {
+	net.Conn
+	dead      bool
+	used      atomic.Bool
+	ended     atomic.Bool
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func (s *proxySession) endIfUnused() {
+	if !s.used.Load() {
+		s.ended.Store(true)
+		s.Conn.SetReadDeadline(time.Now())
+	}
+}
+
+func (s *proxySession) Read(p []byte) (int, error) {
+	if s.dead {
+		<-s.closed
+		return 0, net.ErrClosed
+	}
+	n, err := s.Conn.Read(p)
+	if err != nil && s.ended.Load() {
+		return 0, io.EOF
+	}
+	return n, err
+}
+
+func (s *proxySession) Write(p []byte) (int, error) {
+	s.used.Store(true)
+	if s.dead {
+		return len(p), nil
+	}
+	return s.Conn.Write(p)
+}
+
+func (s *proxySession) Close() error {
+	s.closeOnce.Do(func() { close(s.closed) })
+	return s.Conn.Close()
+}
+
+// An idle tunnel holds no session: a server ends one that carries nothing, and a
+// bind that dials again each time keeps a new connection going forever.
+func TestClientBindDialsOnlyToSend(t *testing.T) {
+	ctx := pause.WithDefaultManager(context.Background())
+	clientPrivate, clientPublic := testKeyPair(t)
+	serverPublic, port := startTestServer(t, ctx, clientPublic)
+	proxy := &sessionProxy{endAfter: 50 * time.Millisecond}
+	client := startTestClient(t, ctx, proxy, clientPrivate, serverPublic, port)
+
+	time.Sleep(500 * time.Millisecond)
+	if dials := proxy.dials.Load(); dials != 0 {
+		t.Fatalf("the idle tunnel dialed the proxy %d times", dials)
+	}
+	packetConn, err := client.ListenPacket(ctx, serverAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packetConn.Close()
+	sendThrough(t, packetConn)
+	deadline := time.Now().Add(8 * time.Second)
+	for !handshakeCompleted(client) {
+		if time.Now().After(deadline) {
+			t.Fatal("the handshake through the proxy did not complete")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if dials := proxy.dials.Load(); dials != 1 {
+		t.Fatalf("one handshake took %d sessions", dials)
+	}
+}
+
+// A session that died unannounced is left once WireGuard stops trusting the path,
+// also while packets keep coming, which restart the handshake retries.
+func TestClientBindLeavesSessionWireGuardDistrusts(t *testing.T) {
+	ctx := pause.WithDefaultManager(context.Background())
+	clientPrivate, clientPublic := testKeyPair(t)
+	serverPublic, port := startTestServer(t, ctx, clientPublic)
+	proxy := &sessionProxy{blackholeFirst: true}
+	client := startTestClient(t, ctx, proxy, clientPrivate, serverPublic, port)
+
+	packetConn, err := client.ListenPacket(ctx, serverAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packetConn.Close()
+	deadline := time.Now().Add(12 * time.Second)
+	for !handshakeCompleted(client) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no handshake after %d sessions", proxy.dials.Load())
+		}
+		sendThrough(t, packetConn)
+		time.Sleep(20 * time.Millisecond)
+	}
+	if dials := proxy.dials.Load(); dials != 2 {
+		t.Fatalf("the handshake came up after %d sessions instead of a second one", dials)
+	}
+}
+
+// A session that brought nothing for the idle timeout is closed, and the next
+// packet goes through a new one: a NAT on the way may have forgotten it.
+func TestClientBindClosesIdleSession(t *testing.T) {
+	idleTimeout := connectionIdleTimeout
+	connectionIdleTimeout = 600 * time.Millisecond
+	t.Cleanup(func() { connectionIdleTimeout = idleTimeout })
+	ctx := pause.WithDefaultManager(context.Background())
+	clientPrivate, clientPublic := testKeyPair(t)
+	serverPublic, port := startTestServer(t, ctx, clientPublic)
+	proxy := &sessionProxy{}
+	client := startTestClient(t, ctx, proxy, clientPrivate, serverPublic, port)
+
+	packetConn, err := client.ListenPacket(ctx, serverAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packetConn.Close()
+	sendThrough(t, packetConn)
+	deadline := time.Now().Add(8 * time.Second)
+	for !handshakeCompleted(client) {
+		if time.Now().After(deadline) {
+			t.Fatal("the handshake through the proxy did not complete")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(2 * connectionIdleTimeout)
+	sendThrough(t, packetConn)
+	deadline = time.Now().Add(2 * time.Second)
+	for proxy.dials.Load() != 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("a packet after the idle timeout went through the idle session")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A peer known by a name that has an IPv6 address the proxy cannot reach: led
+// through the proxy it must still come up, since the proxy resolves the name.
+func TestClientBindDialsLonePeerByNameThroughDetour(t *testing.T) {
+	ctx := pause.WithDefaultManager(context.Background())
+	clientPrivate, clientPublic := testKeyPair(t)
+	serverPublic, port := startTestServer(t, ctx, clientPublic)
 
 	proxy := &proxyDialer{}
 	var resolved atomic.Bool

@@ -17,9 +17,15 @@ import (
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
 	"github.com/sagernet/wireguard-go/conn"
+	"github.com/sagernet/wireguard-go/device"
 )
 
 var _ conn.Bind = (*ClientBind)(nil)
+
+// connectionIdleTimeout closes a connection to the server that brought nothing
+// for so long: no WireGuard session outlives it, and a NAT on the way may have
+// forgotten the connection without a word to either end.
+var connectionIdleTimeout = device.RejectAfterTime
 
 type ClientBind struct {
 	ctx                 context.Context
@@ -32,6 +38,7 @@ type ClientBind struct {
 	reservedForEndpoint map[netip.AddrPort][3]uint8
 	connAccess          sync.Mutex
 	conn                atomic.Pointer[wireConn]
+	connected           chan struct{}
 	done                chan struct{}
 	isConnect           bool
 	connectAddr         M.Socksaddr
@@ -45,6 +52,7 @@ func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, i
 		pauseManager:        service.FromContext[pause.Manager](ctx),
 		dialer:              dialer,
 		reservedForEndpoint: make(map[netip.AddrPort][3]uint8),
+		connected:           make(chan struct{}),
 		done:                make(chan struct{}),
 		isConnect:           isConnect,
 		connectAddr:         connectAddr,
@@ -114,7 +122,64 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		}
 	}
 	c.conn.Store(serverConn)
+	close(c.connected)
+	c.connected = make(chan struct{})
+	go c.closeWhenIdle(serverConn, connectionIdleTimeout)
 	return serverConn, nil
+}
+
+// awaitConn returns the connection Send dialed, waiting while there is none: the
+// bind dials only to send, since a proxy server ends a session that carries
+// nothing, as Xray's mux does after a minute.
+func (c *ClientBind) awaitConn() (*wireConn, error) {
+	for {
+		c.connAccess.Lock()
+		serverConn := c.conn.Load()
+		connected := c.connected
+		c.connAccess.Unlock()
+		if serverConn != nil && !serverConn.closed() {
+			return serverConn, nil
+		}
+		select {
+		case <-c.done:
+			return nil, net.ErrClosed
+		case <-connected:
+		}
+	}
+}
+
+func (c *ClientBind) closeWhenIdle(serverConn *wireConn, timeout time.Duration) {
+	ticker := time.NewTicker(timeout / 12)
+	defer ticker.Stop()
+	lastReceived := time.Now()
+	for {
+		select {
+		case <-serverConn.done:
+			return
+		case now := <-ticker.C:
+			if serverConn.received.Swap(false) {
+				lastReceived = now
+			} else if now.Sub(lastReceived) >= timeout {
+				if serverConn.Close() == nil {
+					c.logger.Debug("close the connection to the server, idle for ", timeout)
+				}
+				return
+			}
+		}
+	}
+}
+
+// clearPath leaves the connection to a lone peer that WireGuard stopped trusting:
+// writes into a connection that a NAT on the way forgot still succeed, so nothing
+// else would end it. A connection several peers share is kept for the others.
+func (c *ClientBind) clearPath() {
+	if !c.isConnect {
+		return
+	}
+	serverConn := c.conn.Load()
+	if serverConn != nil && serverConn.Close() == nil {
+		c.logger.Debug("close the connection to the server: the peer stopped answering")
+	}
 }
 
 func (c *ClientBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint16, err error) {
@@ -128,39 +193,36 @@ func (c *ClientBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint1
 }
 
 func (c *ClientBind) receive(packets [][]byte, sizes []int, eps []conn.Endpoint) (count int, err error) {
-	udpConn, err := c.connect()
+	udpConn, err := c.awaitConn()
 	if err != nil {
-		select {
-		case <-c.done:
-			return
-		default:
-		}
-		c.logger.Error(E.Cause(err, "connect to server"))
-		err = nil
-		c.pauseManager.WaitActive()
-		time.Sleep(time.Second)
 		return
 	}
 	n, addr, err := udpConn.ReadFrom(packets[0])
 	if err != nil {
-		udpConn.Close()
+		lost := udpConn.Close() == nil
 		select {
 		case <-c.done:
 		default:
-			c.logger.Error(E.Cause(err, "read packet"))
+			// a session ending after replies is routine, one without any is refused
+			if lost && udpConn.delivered.Load() {
+				c.logger.Debug(E.Cause(err, "read packet"))
+			} else if lost {
+				c.logger.Error(E.Cause(err, "read packet"))
+			}
 			err = nil
 		}
 		return
 	}
+	udpConn.noteReceived()
 	sizes[0] = n
 	if n > 3 && c.hasReserved() {
 		b := packets[0]
 		clear(b[1:4])
 	}
 	if c.connectAddr.IsFqdn() {
-		eps[0] = domainEndpoint(c.connectAddr)
+		eps[0] = domainEndpoint{c, c.connectAddr}
 	} else {
-		eps[0] = remoteEndpoint(M.SocksaddrFromNet(addr).Unwrap().AddrPort())
+		eps[0] = remoteEndpoint{c, M.SocksaddrFromNet(addr).Unwrap().AddrPort()}
 	}
 	count = 1
 	return
@@ -194,7 +256,7 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 	}
 	var destination netip.AddrPort
 	if endpoint, isRemote := ep.(remoteEndpoint); isRemote {
-		destination = netip.AddrPort(endpoint)
+		destination = endpoint.addr
 	}
 	for _, buf := range bufs {
 		if offset > 0 {
@@ -213,7 +275,10 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 		}
 		_, err = udpConn.WriteToUDPAddrPort(buf, destination)
 		if err != nil {
-			udpConn.Close()
+			if udpConn.Close() != nil {
+				// closed under the write by clearPath or closeWhenIdle: a lost datagram
+				return nil
+			}
 			return err
 		}
 	}
@@ -222,13 +287,13 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 
 func (c *ClientBind) ParseEndpoint(s string) (conn.Endpoint, error) {
 	if c.connectAddr.IsFqdn() && s == c.connectAddr.String() {
-		return domainEndpoint(c.connectAddr), nil
+		return domainEndpoint{c, c.connectAddr}, nil
 	}
 	ap, err := netip.ParseAddrPort(s)
 	if err != nil {
 		return nil, err
 	}
-	return remoteEndpoint(ap), nil
+	return remoteEndpoint{c, ap}, nil
 }
 
 func (c *ClientBind) BatchSize() int {
@@ -243,9 +308,29 @@ func (c *ClientBind) SetReservedForEndpoint(destination netip.AddrPort, reserved
 
 type wireConn struct {
 	net.PacketConn
-	conn   net.Conn
-	access sync.Mutex
-	done   chan struct{}
+	conn      net.Conn
+	access    sync.Mutex
+	done      chan struct{}
+	received  atomic.Bool
+	delivered atomic.Bool
+}
+
+func (w *wireConn) noteReceived() {
+	if !w.received.Load() {
+		w.received.Store(true)
+	}
+	if !w.delivered.Load() {
+		w.delivered.Store(true)
+	}
+}
+
+func (w *wireConn) closed() bool {
+	select {
+	case <-w.done:
+		return true
+	default:
+		return false
+	}
 }
 
 func (w *wireConn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {
@@ -270,9 +355,15 @@ func (w *wireConn) Close() error {
 
 var _ conn.Endpoint = (*remoteEndpoint)(nil)
 
-type remoteEndpoint netip.AddrPort
+type remoteEndpoint struct {
+	bind *ClientBind
+	addr netip.AddrPort
+}
 
+// ClearSrc is called by WireGuard before it sends again a handshake that went
+// unanswered, or one because the peer fell silent.
 func (e remoteEndpoint) ClearSrc() {
+	e.bind.clearPath()
 }
 
 func (e remoteEndpoint) SrcToString() string {
@@ -280,16 +371,16 @@ func (e remoteEndpoint) SrcToString() string {
 }
 
 func (e remoteEndpoint) DstToString() string {
-	return netip.AddrPort(e).String()
+	return e.addr.String()
 }
 
 func (e remoteEndpoint) DstToBytes() []byte {
-	b, _ := netip.AddrPort(e).MarshalBinary()
+	b, _ := e.addr.MarshalBinary()
 	return b
 }
 
 func (e remoteEndpoint) DstIP() netip.Addr {
-	return netip.AddrPort(e).Addr()
+	return e.addr.Addr()
 }
 
 func (e remoteEndpoint) SrcIP() netip.Addr {
@@ -301,9 +392,13 @@ var _ conn.Endpoint = (*domainEndpoint)(nil)
 // domainEndpoint is the peer of a bind connected to it by name: the dialer
 // resolves the name where it connects, and every packet goes to and comes from
 // that connection.
-type domainEndpoint M.Socksaddr
+type domainEndpoint struct {
+	bind        *ClientBind
+	destination M.Socksaddr
+}
 
 func (e domainEndpoint) ClearSrc() {
+	e.bind.clearPath()
 }
 
 func (e domainEndpoint) SrcToString() string {
@@ -311,11 +406,11 @@ func (e domainEndpoint) SrcToString() string {
 }
 
 func (e domainEndpoint) DstToString() string {
-	return M.Socksaddr(e).String()
+	return e.destination.String()
 }
 
 func (e domainEndpoint) DstToBytes() []byte {
-	return []byte(M.Socksaddr(e).String())
+	return []byte(e.destination.String())
 }
 
 func (e domainEndpoint) DstIP() netip.Addr {
