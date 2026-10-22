@@ -1,16 +1,9 @@
 name: OpenWrt packages
 
-# A release tag builds and publishes every variant for every target; a push or a pull request
-# tests the core and builds every variant for arm64; a manual run builds what its inputs ask for.
+# Run by hand (Actions, OpenWrt packages, Run workflow): it builds the packages of the chosen
+# targets and variants. Run from a vX.Y.Z-rN tag with release checked, it builds every target
+# and variant and drafts that tag's release, published by hand once the assets are checked.
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+-r[0-9]+"
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       targets:
@@ -30,6 +23,10 @@ on:
         description: "Custom tags instead of the variant, as ./build.sh --tags takes them"
         type: string
         default: ""
+      release:
+        description: "Draft the release of the vX.Y.Z-rN tag chosen in Use workflow from"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -39,37 +36,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: release/forkop/GO_VERSION
-
-      - name: Check the tree
-        run: release/forkop/check-tree.sh
-
-      - name: Test
-        run: |
-          set -euo pipefail
-          tags=$(./build.sh --print-tags --variant full --tags -with_naive)
-          go list ./... | grep -v '^github.com/sagernet/sing-box/common/netns$' |
-            xargs go test -tags "$tags" -ldflags=-checklinkname=0
-          # Ubuntu's namespace restrictions require privileges for this test.
-          go test -c -tags "$tags" -ldflags=-checklinkname=0 -o "$RUNNER_TEMP/netns.test" ./common/netns
-          sudo "$RUNNER_TEMP/netns.test" -test.v
-
-      - name: Build with the required tags alone
-        run: |
-          set -euo pipefail
-          tags=$(./build.sh --print-required-tags)
-          go build -tags "$tags" -ldflags=-checklinkname=0 ./...
-          go test -tags "$tags" -ldflags=-checklinkname=0 ./include
-
   plan:
     runs-on: ubuntu-latest
     outputs:
@@ -81,24 +47,30 @@ jobs:
       - name: Plan the builds
         id: plan
         env:
-          EVENT: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
           INPUT_TARGETS: ${{ inputs.targets }}
           INPUT_VARIANT: ${{ inputs.variant }}
           INPUT_TAGS: ${{ inputs.tags }}
+          INPUT_RELEASE: ${{ inputs.release }}
         run: |
           set -euo pipefail
-          targets="arm64"
-          variants=$(./build.sh --print-variants)
-          if [ "$REF_TYPE" = tag ]; then
-            targets=$(./build.sh --print-targets)
-          elif [ "$EVENT" = workflow_dispatch ]; then
-            read -r -a requested <<< "$INPUT_TARGETS"
-            targets=$(./build.sh --print-targets "${requested[@]}")
-            [ "$INPUT_VARIANT" = all ] || variants="$INPUT_VARIANT"
-            [ -z "$INPUT_TAGS" ] || variants="custom"
+          if [ "$INPUT_RELEASE" = true ]; then
+            if [ "$REF_TYPE" != tag ] || ! [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$ ]]; then
+              echo "::error::A release is built from its vX.Y.Z-rN tag: choose the tag in Use workflow from"
+              exit 1
+            fi
+            if [ "$INPUT_TARGETS" != all ] || [ "$INPUT_VARIANT" != all ] || [ -n "$INPUT_TAGS" ]; then
+              echo "::error::A release carries every target and variant: leave targets, variant and tags as they are"
+              exit 1
+            fi
           fi
-          matrix=$(jq -cn --arg targets "$targets" --arg variants "$variants" --arg tags "${INPUT_TAGS:-}" '
+          read -r -a requested <<< "$INPUT_TARGETS"
+          targets=$(./build.sh --print-targets "${requested[@]}")
+          variants=$(./build.sh --print-variants)
+          [ "$INPUT_VARIANT" = all ] || variants="$INPUT_VARIANT"
+          [ -z "$INPUT_TAGS" ] || variants="custom"
+          matrix=$(jq -cn --arg targets "$targets" --arg variants "$variants" --arg tags "$INPUT_TAGS" '
             { include: [ ($targets | split(" ") | map(select(. != "")))[] as $target
               | ($variants | split(" ") | map(select(. != "")))[] as $variant
               | { target: $target, variant: $variant, tags: (if $variant == "custom" then $tags else "" end) } ] }')
@@ -106,9 +78,7 @@ jobs:
           echo "$matrix" | jq .
 
   build:
-    needs:
-      - test
-      - plan
+    needs: plan
     name: ${{ matrix.target }} ${{ matrix.variant }}
     runs-on: ubuntu-latest
     strategy:
@@ -182,7 +152,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.ref_type == 'tag'
+    if: inputs.release
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -194,7 +164,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Publish the release
+      - name: Draft the release
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
@@ -203,6 +173,12 @@ jobs:
           set -euo pipefail
           cd dist
           sha256sum -- *.ipk *.apk > SHA256SUMS
-          gh release view "$TAG" >/dev/null 2>&1 ||
-            gh release create "$TAG" --verify-tag --generate-notes
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != true ]; then
+              echo "::error::The release $TAG is published already: its assets stay as they are"
+              exit 1
+            fi
+          else
+            gh release create "$TAG" --draft --verify-tag --generate-notes
+          fi
           gh release upload "$TAG" -- *.ipk *.apk SHA256SUMS --clobber
