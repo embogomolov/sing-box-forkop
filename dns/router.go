@@ -1502,7 +1502,7 @@ func dnsRuleModeRequirementsInDefaultRule(router adapter.Router, rule option.Def
 		}
 		// ip_version is not a headless-rule item, so ContainsIPVersionRule is intentionally absent.
 		flags.disabled = flags.disabled || metadata.ContainsDNSQueryTypeRule
-		if !rule.RuleSetIPCIDRMatchSource && metadata.ContainsIPCIDRRule {
+		if !rule.RuleSetIPCIDRMatchSource && !rule.RuleSetDomainOnly && metadata.ContainsIPCIDRRule {
 			flags.needed = true
 		}
 	}
@@ -1645,7 +1645,8 @@ func validateLegacyDNSModeDisabledDefaultRule(router adapter.Router, rule option
 	// rule_set entries are only rejected when every referenced set is pure-IP;
 	// mixed sets still fall through because their non-IP branches remain matchable
 	// before a DNS response is available.
-	if !rule.MatchResponse.IsEnabled() && len(rule.RuleSet) > 0 {
+	// A rule_set_domain_only rule reads only the domains of its sets.
+	if !rule.MatchResponse.IsEnabled() && !rule.RuleSetDomainOnly && len(rule.RuleSet) > 0 {
 		for _, tag := range rule.RuleSet {
 			metadata, err := lookupDNSRuleSetMetadata(router, tag, metadataOverrides)
 			if err != nil {
