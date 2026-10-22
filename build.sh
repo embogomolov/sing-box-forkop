@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds sing-box-forkop, the sing-box core Forkop runs on OpenWrt, and packages
 # it for opkg (.ipk) and apk (.apk). The same script builds the releases in CI.
-# See README.md for the variants and the tags.
+# ./build.sh --list prints the variants, the tags and the targets.
 set -euo pipefail
 umask 022
 
@@ -9,7 +9,8 @@ PROJECT=$(cd "$(dirname "$0")" && pwd)
 BUILD_CACHE="${FORKOP_BUILD_CACHE:-$HOME/.cache/sing-box-forkop}"
 CRONET_GO_PATH="${CRONET_GO_PATH:-$BUILD_CACHE/cronet-go}"
 
-TARGETS=(amd64 arm64 386 armv7 mipsle)
+TARGETS=(amd64 386 386-softfloat arm64 armv7 armv6 armv5 mipsle mipsle-mips32 mips mips64le mips64 riscv64 loong64)
+UNBUILT_ARCHITECTURES=(arm_fa526 armeb_xscale powerpc_464fp powerpc_8548 powerpc64_e5500)
 VARIANTS=(base full tiny)
 
 # Every build: the code a build without one of these would need is pruned
@@ -39,11 +40,13 @@ Usage: ./build.sh [options] [target...]
 
 Build sing-box-forkop packages for OpenWrt.
 
-Targets:
-  amd64 arm64 386 armv7 mipsle         all of them when none is given
+Targets, all of them when none is given; --list names their OpenWrt architectures:
+  amd64 386 386-softfloat arm64 armv7 armv6 armv5
+  mipsle mipsle-mips32 mips mips64le mips64 riscv64 loong64
 
 Options:
-  -v, --variant NAME     base (the default), full or tiny
+  -v, --variant NAME     base (the default), full or tiny; full leaves with_naive
+                         out on a target cronet-go has no library for
   -t, --tags LIST        a custom build, the required tags always in it:
                            with_quic,with_openvpn,...   exactly these optional tags
                            +with_openconnect,-with_quic   the variant changed
@@ -74,14 +77,25 @@ die() {
   exit 2
 }
 
-# The OpenWrt architectures a Go target runs on, and the Go settings for it.
+# The OpenWrt architectures (24.10 and 25.12 names) a Go target runs on, and its Go settings.
+# ARMv7 cores OpenWrt builds without an FPU take the ARMv5 build, as OpenWrt's Go packages do.
 target_architectures() {
   case "$1" in
     amd64) echo "x86_64" ;;
-    arm64) echo "aarch64_cortex-a53 aarch64_cortex-a72 aarch64_cortex-a76 aarch64_generic" ;;
     386) echo "i386_pentium4" ;;
+    386-softfloat) echo "i386_pentium-mmx" ;;
+    arm64) echo "aarch64_cortex-a53 aarch64_cortex-a72 aarch64_cortex-a76 aarch64_generic" ;;
     armv7) echo "arm_cortex-a5_vfpv4 arm_cortex-a7_neon-vfpv4 arm_cortex-a7_vfpv4 arm_cortex-a8_vfpv3 arm_cortex-a9_neon arm_cortex-a9_vfpv3-d16 arm_cortex-a15_neon-vfpv4" ;;
-    mipsle) echo "mipsel_24kc mipsel_74kc mipsel_mips32" ;;
+    armv6) echo "arm_arm1176jzf-s_vfp" ;;
+    armv5) echo "arm_arm926ej-s arm_cortex-a7 arm_cortex-a9 arm_xscale" ;;
+    mipsle) echo "mipsel_24kc mipsel_24kc_24kf mipsel_74kc" ;;
+    # MIPS32 release 1: the MIPS32r2 cronet in mipsle's full build does not run on it.
+    mipsle-mips32) echo "mipsel_mips32" ;;
+    mips) echo "mips_24kc mips_4kec mips_mips32" ;;
+    mips64le) echo "mips64el_mips64r2" ;;
+    mips64) echo "mips64_mips64r2 mips64_octeonplus" ;;
+    riscv64) echo "riscv64_generic riscv64_riscv64" ;;
+    loong64) echo "loongarch64_generic" ;;
     *) return 1 ;;
   esac
 }
@@ -89,18 +103,44 @@ target_architectures() {
 target_go_env() {
   case "$1" in
     amd64) echo "GOARCH=amd64 GOAMD64=v1" ;;
-    arm64) echo "GOARCH=arm64" ;;
     386) echo "GOARCH=386 GO386=sse2" ;;
+    386-softfloat) echo "GOARCH=386 GO386=softfloat" ;;
+    arm64) echo "GOARCH=arm64 GOARM64=v8.0" ;;
     armv7) echo "GOARCH=arm GOARM=7" ;;
-    mipsle) echo "GOARCH=mipsle GOMIPS=softfloat" ;;
+    armv6) echo "GOARCH=arm GOARM=6" ;;
+    armv5) echo "GOARCH=arm GOARM=5" ;;
+    mipsle|mipsle-mips32) echo "GOARCH=mipsle GOMIPS=softfloat" ;;
+    mips) echo "GOARCH=mips GOMIPS=softfloat" ;;
+    mips64le) echo "GOARCH=mips64le GOMIPS64=softfloat" ;;
+    mips64) echo "GOARCH=mips64 GOMIPS64=softfloat" ;;
+    riscv64) echo "GOARCH=riscv64 GORISCV64=rva20u64" ;;
+    loong64) echo "GOARCH=loong64" ;;
   esac
 }
 
+unbuilt_reason() {
+  case "$1" in
+    arm_fa526) echo "an ARMv4 core, and Go needs ARMv5" ;;
+    armeb_xscale) echo "big-endian ARM, which Go has no port for" ;;
+    powerpc_464fp|powerpc_8548) echo "32-bit PowerPC, which Go has no port for" ;;
+    powerpc64_e5500) echo "Go's ppc64 port needs POWER8, which the e5500 core is not" ;;
+  esac
+}
+
+# cronet-go's name for a target it builds the musl library of with_naive for: full goes without it elsewhere.
 naive_arch() {
   case "$1" in
+    amd64|386|arm64|mipsle|riscv64|loong64) echo "$1" ;;
     armv7) echo arm ;;
-    *) echo "$1" ;;
+    *) return 1 ;;
   esac
+}
+
+targets_without_naive() {
+  local target
+  for target in "${TARGETS[@]}"; do
+    naive_arch "$target" >/dev/null || echo "$target"
+  done | paste -sd' ' -
 }
 
 target_of_architecture() {
@@ -113,6 +153,7 @@ target_of_architecture() {
   return 1
 }
 
+# A variant's tags on a target, or as the variant stands when no target is given.
 variant_tags() {
   local -a tags
   case "$1" in
@@ -121,6 +162,9 @@ variant_tags() {
     tiny) tags=("${TINY_TAGS[@]}") ;;
     *) return 1 ;;
   esac
+  if [ -n "${2:-}" ] && ! naive_arch "$2" >/dev/null; then
+    mapfile -t tags < <(without with_naive "${tags[@]}")
+  fi
   sorted_list "${REQUIRED_TAGS[@]}" "${tags[@]}"
 }
 
@@ -134,11 +178,19 @@ contains() {
   printf '%s\n' "$@" | grep -qxF -- "$item"
 }
 
+without() {
+  local item="$1" tag
+  shift
+  for tag in "$@"; do
+    [ "$tag" = "$item" ] || printf '%s\n' "$tag"
+  done
+}
+
 # A required tag is in every build already; an optional one is added or removed.
 # Any other name would select code this tree does not have.
 resolve_tags() {
-  local spec="$1" variant="$2" item name tag changes=0 exact=0
-  local -a tags=() requested=() kept=()
+  local spec="$1" variant="$2" target="${3:-}" item name tag changes=0 exact=0
+  local -a tags=() requested=()
   IFS=',' read -r -a requested <<< "$(tr -d '[:space:]' <<< "$spec")"
   for item in "${requested[@]}"; do
     case "$item" in
@@ -151,7 +203,7 @@ resolve_tags() {
   [ $((changes + exact)) -eq 1 ] || die "--tags takes either a list of tags or +tag/-tag changes, not both: $spec"
 
   if [ "$changes" = 1 ]; then
-    IFS=',' read -r -a tags <<< "$(variant_tags "$variant")"
+    IFS=',' read -r -a tags <<< "$(variant_tags "$variant" "$target")"
   fi
   for item in "${requested[@]}"; do
     [ -n "$item" ] || continue
@@ -163,13 +215,7 @@ resolve_tags() {
     contains "$name" "${OPTIONAL_TAGS[@]}" ||
       die "unknown tag '$name'. A build chooses among: ${OPTIONAL_TAGS[*]}"
     case "$item" in
-      -*)
-        kept=()
-        for tag in "${tags[@]}"; do
-          [ "$tag" = "$name" ] || kept+=("$tag")
-        done
-        tags=("${kept[@]}")
-        ;;
+      -*) mapfile -t tags < <(without "$name" "${tags[@]}") ;;
       *) tags+=("$name") ;;
     esac
   done
@@ -180,29 +226,46 @@ resolve_tags() {
       fi
     done
   fi
+  if [ -n "$target" ] && contains with_naive "${tags[@]}" && ! naive_arch "$target" >/dev/null; then
+    die "with_naive cannot be built for $target: cronet-go builds no library for it to link"
+  fi
   sorted_list "${REQUIRED_TAGS[@]}" "${tags[@]}"
 }
 
-# The name a tag set is published under: an official variant when the set is
-# exactly one, "custom" otherwise.
+target_tags() {
+  if [ -n "$TAGS_SPEC" ]; then
+    resolve_tags "$TAGS_SPEC" "$VARIANT" "${1:-}"
+  else
+    variant_tags "$VARIANT" "${1:-}"
+  fi
+}
+
+# The name a tag set is published under on a target: an official variant when the
+# set is exactly one there, "custom" otherwise.
 variant_label() {
   local variant
   for variant in "${VARIANTS[@]}"; do
-    [ "$1" != "$(variant_tags "$variant")" ] || { echo "$variant"; return; }
+    [ "$1" != "$(variant_tags "$variant" "$2")" ] || { echo "$variant"; return; }
   done
   echo custom
 }
 
 list_variants() {
-  local variant target
+  local variant target architecture
   for variant in "${VARIANTS[@]}"; do
     printf '%s\n  %s\n' "$variant" "$(variant_tags "$variant" | sed 's/,/ /g')"
+    [ "$variant" != full ] ||
+      printf '  without with_naive on %s: cronet-go builds no library for them\n' "$(targets_without_naive)"
   done
   printf '\nrequired in every build\n  %s\n' "${REQUIRED_TAGS[*]}"
   printf 'optional\n  %s\n  %s need with_gvisor\n' "${OPTIONAL_TAGS[*]}" "${GVISOR_TAGS[*]}"
   printf '\ntargets\n'
   for target in "${TARGETS[@]}"; do
-    printf '  %-7s %s\n' "$target" "$(target_architectures "$target")"
+    printf '  %-13s %s\n' "$target" "$(target_architectures "$target")"
+  done
+  printf '\nOpenWrt architectures no target runs on\n'
+  for architecture in "${UNBUILT_ARCHITECTURES[@]}"; do
+    printf '  %-15s %s\n' "$architecture" "$(unbuilt_reason "$architecture")"
   done
 }
 
@@ -311,8 +374,8 @@ build_binary() {
 }
 
 build_target() {
-  local target="$1" label binary architecture architectures
-  label=$(variant_label "$TAGS")
+  local target="$1" build_tags="${TARGET_TAGS[$1]}" label binary architecture architectures
+  label=$(variant_label "$build_tags" "$target")
   binary="$OUTPUT/build/$target/$label/sing-box"
   architectures=$(target_architectures "$target")
   [ -z "$ARCHITECTURES" ] || architectures=$(for architecture in $ARCHITECTURES; do
@@ -320,8 +383,8 @@ build_target() {
   done)
 
   echo "==> Building $target $label ($VERSION)"
-  echo "    tags: $TAGS"
-  build_binary "$target" "$TAGS" "$binary"
+  echo "    tags: $build_tags"
+  build_binary "$target" "$build_tags" "$binary"
   echo "    binary: $binary ($(stat -c %s "$binary") bytes)"
   [ "$BINARY_ONLY" = 0 ] || return 0
   for architecture in $architectures; do
@@ -372,15 +435,18 @@ done
 if [ -n "$ARCHITECTURES" ]; then
   arch_targets=()
   for architecture in $ARCHITECTURES; do
-    target=$(target_of_architecture "$architecture") ||
-      die "no target builds for OpenWrt architecture '$architecture'. Run ./build.sh --list"
+    if ! target=$(target_of_architecture "$architecture"); then
+      reason=$(unbuilt_reason "$architecture")
+      die "no target builds for OpenWrt architecture '$architecture'${reason:+: $reason}. Run ./build.sh --list"
+    fi
     arch_targets+=("$target")
   done
   [ "${#SELECTED[@]}" = 0 ] || [ "$(sorted_list "${SELECTED[@]}")" = "$(sorted_list "${arch_targets[@]}")" ] ||
     die "--arch $ARCHITECTURES builds $(sorted_list "${arch_targets[@]}"); leave the targets out or name the same ones"
   SELECTED=("${arch_targets[@]}")
 fi
-[ "${#SELECTED[@]}" -gt 0 ] || SELECTED=("${TARGETS[@]}")
+NAMED_TARGETS=${#SELECTED[@]}
+[ "$NAMED_TARGETS" -gt 0 ] || SELECTED=("${TARGETS[@]}")
 read -r -a SELECTED <<< "$(printf '%s\n' "${SELECTED[@]}" | awk '!seen[$0]++' | paste -sd' ' -)"
 if [ "$ACTION" = print-targets ]; then
   echo "${SELECTED[*]}"
@@ -393,18 +459,23 @@ if [ "$ACTION" = print-go-env ]; then
   exit 0
 fi
 
-if [ -n "$TAGS_SPEC" ]; then
-  TAGS=$(resolve_tags "$TAGS_SPEC" "$VARIANT")
-else
-  TAGS=$(variant_tags "$VARIANT")
-fi
-if [ "$ACTION" = print-tags ]; then
-  echo "$TAGS"
-  exit 0
-fi
 if [ "$ACTION" = fetch-cronet ]; then
   acquire_build_lock
   ensure_cronet_go
+  exit 0
+fi
+if [ "$ACTION" = print-tags ] && [ "$NAMED_TARGETS" = 0 ]; then
+  target_tags
+  exit 0
+fi
+declare -A TARGET_TAGS=()
+for target in "${SELECTED[@]}"; do
+  TARGET_TAGS[$target]=$(target_tags "$target")
+done
+if [ "$ACTION" = print-tags ]; then
+  tag_sets=$(printf '%s\n' "${TARGET_TAGS[@]}" | LC_ALL=C sort -u)
+  [ "$(wc -l <<< "$tag_sets")" = 1 ] || die "the targets build different tags: name one of them"
+  echo "$tag_sets"
   exit 0
 fi
 [ -n "$VERSION" ] || VERSION=$(version_from_git)
@@ -422,7 +493,9 @@ if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
 fi
 export SOURCE_DATE_EPOCH
 acquire_build_lock
-[[ ",$TAGS," != *,with_naive,* ]] || ensure_cronet_go
+for target in "${SELECTED[@]}"; do
+  [[ ",${TARGET_TAGS[$target]}," != *,with_naive,* ]] || { ensure_cronet_go; break; }
+done
 
 for target in "${SELECTED[@]}"; do
   build_target "$target"

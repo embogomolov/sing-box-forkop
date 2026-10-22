@@ -145,7 +145,7 @@ jobs:
           else
             args=(--variant "$VARIANT")
           fi
-          tags=$(./build.sh --print-tags "${args[@]}")
+          tags=$(./build.sh --print-tags "${args[@]}" "$TARGET")
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
           case ",$tags," in
             *,with_naive,*) echo "naive=1" >> "$GITHUB_OUTPUT" ;;

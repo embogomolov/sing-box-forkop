@@ -55,23 +55,26 @@ list_pass() {
 }
 pids=()
 for variant in $(bash build.sh --print-variants) required; do
-    if [ "$variant" = required ]; then
-        tags=$(bash build.sh --print-required-tags)
-    else
-        tags=$(bash build.sh --variant "$variant" --print-tags)
-    fi
-    cgo=0
-    [[ ",$tags," != *,with_naive,* ]] || cgo=1
-    while read -r _ goenv; do
+    while read -r target goenv; do
+        if [ "$variant" = required ]; then
+            tags=$(bash build.sh --print-required-tags)
+        else
+            tags=$(bash build.sh --variant "$variant" --print-tags "$target")
+        fi
+        cgo=0
+        [[ ",$tags," != *,with_naive,* ]] || cgo=1
         # shellcheck disable=SC2086
         list_pass "$tags" "$cgo" $goenv &
         pids+=("$!")
+        [ "$target" = amd64 ] || continue
+        # shellcheck disable=SC2086
+        list_pass "$tags,$later_go" "$cgo" $goenv &
+        pids+=("$!")
+        # shellcheck disable=SC2086
+        env GOOS=linux $goenv CGO_ENABLED="$cgo" go list -e -deps -test -tags "$tags" -f '{{.ImportPath}}' ./... \
+            > "$(mktemp "$work/deps.XXXXXX")" &
+        pids+=("$!")
     done < <(bash build.sh --print-go-env)
-    list_pass "$tags,$later_go" "$cgo" GOARCH=amd64 &
-    pids+=("$!")
-    env GOOS=linux GOARCH=amd64 CGO_ENABLED="$cgo" go list -e -deps -test -tags "$tags" -f '{{.ImportPath}}' ./... \
-        > "$(mktemp "$work/deps.XXXXXX")" &
-    pids+=("$!")
 done
 for pid in "${pids[@]}"; do
     wait "$pid" || { problem "go list failed, the build check did not run"; exit 1; }
