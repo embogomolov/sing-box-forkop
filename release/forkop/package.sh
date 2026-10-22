@@ -13,7 +13,7 @@ LICENSE=GPL-3.0-or-later
 DEPENDS=(ca-bundle)
 # Every package that installs /usr/bin/sing-box. opkg removes one in the same transaction only
 # when it is named here, as Conflicts and Replaces; it never follows a Provides to it.
-CONFLICTS=(sing-box sing-box-tiny sing-box-extended podkop-engine podkop-engine-full)
+CONFLICTS=(sing-box sing-box-tiny sing-box-extended podkop-engine podkop-engine-full sing-box-lx sing-box-x rust-x steer-box-connector)
 CONFFILES=(/etc/config/sing-box /etc/sing-box/config.json)
 
 usage() {
