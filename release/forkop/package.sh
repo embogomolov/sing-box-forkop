@@ -11,7 +11,9 @@ URL=https://github.com/ushan0v/sing-box-forkop
 MAINTAINER=ushan0v
 LICENSE=GPL-3.0-or-later
 DEPENDS=(ca-bundle)
-CONFLICTS=(sing-box sing-box-extended podkop-engine podkop-engine-full)
+# Every package that installs /usr/bin/sing-box. opkg removes one in the same transaction only
+# when it is named here, as Conflicts and Replaces; it never follows a Provides to it.
+CONFLICTS=(sing-box sing-box-tiny sing-box-extended podkop-engine podkop-engine-full)
 CONFFILES=(/etc/config/sing-box /etc/sing-box/config.json)
 
 usage() {
@@ -116,7 +118,8 @@ EOF
 }
 
 # apk mkpkg looks owner names up in the root it is given, so it gets a root that
-# knows only root.
+# knows only root. Provided at its version, sing-box makes apk count this package as
+# a sing-box and take it in place of the feed's sing-box or sing-box-tiny.
 build_apk() {
   local metadata="$ROOT/lib/apk/packages" apk_root="$WORK/apk-root" conffile
   mkdir -p "$metadata" "$apk_root/etc"
@@ -140,7 +143,7 @@ build_apk() {
     --info "url:$URL" \
     --info "maintainer:$MAINTAINER" \
     --info "depends:${DEPENDS[*]}" \
-    --info "provides:sing-box" \
+    --info "provides:sing-box=$PACKAGE_VERSION" \
     --info "replaces:${CONFLICTS[*]}" \
     --info "provider-priority:100" \
     --script "post-install:$PROJECT/release/config/openwrt.postinst" \
