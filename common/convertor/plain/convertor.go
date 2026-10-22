@@ -85,14 +85,14 @@ func trimLine(line string) string {
 // same suffix, so they are accepted and normalized instead of failing the list.
 func normalizeDomain(value string) (string, bool) {
 	value = strings.TrimSuffix(value, ".")
-	var subdomainsOnly bool
+	var subdomainsOnly, marked bool
 	switch {
 	case strings.HasPrefix(value, "*."):
-		value, subdomainsOnly = value[2:], true
+		value, subdomainsOnly, marked = value[2:], true, true
 	case strings.HasPrefix(value, "."):
-		value, subdomainsOnly = value[1:], true
+		value, subdomainsOnly, marked = value[1:], true, true
 	case strings.HasPrefix(value, "+."):
-		value = value[2:]
+		value, marked = value[2:], true
 	}
 	if value == "" {
 		return "", false
@@ -108,7 +108,7 @@ func normalizeDomain(value string) (string, bool) {
 		value = converted
 	}
 	value = strings.ToLower(value)
-	if !validDomain(value) {
+	if !validDomain(value, marked) {
 		return "", false
 	}
 	if subdomainsOnly {
@@ -117,14 +117,15 @@ func normalizeDomain(value string) (string, bool) {
 	return value, true
 }
 
-func validDomain(value string) bool {
+func validDomain(value string, marked bool) bool {
 	if len(value) > 253 {
 		return false
 	}
 	labels := strings.Split(value, ".")
-	// A list of bare names carries no domain: rejecting them keeps a plain text
-	// error body from being read as a one-entry rule-set.
-	if len(labels) < 2 {
+	// A bare name is no domain, which keeps a plain text error body from being
+	// read as a one-entry rule-set; a top-level domain comes marked as a suffix,
+	// as `.ua` in itdoginfo's lists.
+	if len(labels) < 2 && !marked {
 		return false
 	}
 	hasLetter := false

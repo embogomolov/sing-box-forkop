@@ -43,6 +43,17 @@ func TestToOptionsMixedList(t *testing.T) {
 	}
 }
 
+func TestToOptionsTopLevelSuffixes(t *testing.T) {
+	rules, err := ToOptions(strings.NewReader(".ua\n*.UA\n+.рф\nexample.com\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDomains := []string{".ua", "xn--p1ai", "example.com"}
+	if !slices.Equal(rules[0].DefaultOptions.DomainSuffix, wantDomains) {
+		t.Fatalf("unexpected domains: %v", rules[0].DefaultOptions.DomainSuffix)
+	}
+}
+
 func TestToOptionsRejectsForeignSyntax(t *testing.T) {
 	for name, content := range map[string]string{
 		"html":          "<html><body>denied</body></html>\n",
