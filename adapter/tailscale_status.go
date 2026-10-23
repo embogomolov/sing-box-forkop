@@ -19,7 +19,9 @@ type TailscaleStatus struct {
 	Tailnet   string   `json:"tailnet,omitempty"`
 	Addresses []string `json:"addresses"`
 	// KeyExpiry is when the node key expires, in Unix seconds; zero when it never does.
-	KeyExpiry          int64                  `json:"keyExpiry,omitempty"`
+	KeyExpiry int64 `json:"keyExpiry,omitempty"`
+	// ExitNode is the exit node the endpoint is set to use, a name or an address as its options give it.
+	ExitNode           string                 `json:"exitNode,omitempty"`
 	AdvertisesExitNode bool                   `json:"advertisesExitNode"`
 	ExitNodeApproved   bool                   `json:"exitNodeApproved"`
 	Routes             []TailscaleRouteStatus `json:"routes"`
@@ -37,10 +39,13 @@ type TailscaleRouteStatus struct {
 type TailscalePeerStatus struct {
 	Name      string   `json:"name"`
 	DNSName   string   `json:"dnsName,omitempty"`
-	User      string   `json:"user,omitempty"`
 	Addresses []string `json:"addresses"`
-	Online    bool     `json:"online"`
+	// Subnets are the routes the tailnet reaches through this device, exit routes aside.
+	Subnets []string `json:"subnets,omitempty"`
+	Online  bool     `json:"online"`
 	// LastSeen is in Unix seconds; zero for a peer online now or never seen.
 	LastSeen       int64 `json:"lastSeen,omitempty"`
 	ExitNodeOption bool  `json:"exitNodeOption"`
+	// ExitNode reports the device the endpoint sends internet traffic through.
+	ExitNode bool `json:"exitNode"`
 }

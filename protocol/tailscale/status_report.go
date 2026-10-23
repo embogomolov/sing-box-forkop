@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/tailscale/health/healthmsg"
 	"github.com/sagernet/tailscale/ipn"
 	"github.com/sagernet/tailscale/ipn/ipnstate"
+	"github.com/sagernet/tailscale/net/tsaddr"
 )
 
 var _ adapter.TailscaleStatusReporter = (*Endpoint)(nil)
@@ -19,6 +20,7 @@ func (t *Endpoint) TailscaleStatus() adapter.TailscaleStatus {
 	result := adapter.TailscaleStatus{
 		Tag:                t.Tag(),
 		State:              ipn.Starting.String(),
+		ExitNode:           t.exitNode,
 		AdvertisesExitNode: t.advertiseExitNode,
 		Addresses:          []string{},
 		Routes:             []adapter.TailscaleRouteStatus{},
@@ -68,11 +70,10 @@ func (t *Endpoint) TailscaleStatus() adapter.TailscaleStatus {
 			Name:           machineName(peer),
 			DNSName:        strings.TrimSuffix(peer.DNSName, "."),
 			Addresses:      make([]string, 0, len(peer.TailscaleIPs)),
+			Subnets:        subnets(peer),
 			Online:         peer.Online,
 			ExitNodeOption: peer.ExitNodeOption,
-		}
-		if profile, loaded := status.User[peer.UserID]; loaded {
-			peerStatus.User = profile.LoginName
+			ExitNode:       peer.ExitNode,
 		}
 		for _, address := range peer.TailscaleIPs {
 			peerStatus.Addresses = append(peerStatus.Addresses, address.String())
@@ -101,4 +102,17 @@ func machineName(peer *ipnstate.PeerStatus) string {
 		return label
 	}
 	return peer.HostName
+}
+
+func subnets(peer *ipnstate.PeerStatus) []string {
+	if peer.PrimaryRoutes == nil {
+		return nil
+	}
+	var result []string
+	for _, prefix := range peer.PrimaryRoutes.All() {
+		if !tsaddr.IsExitRoute(prefix) {
+			result = append(result, prefix.String())
+		}
+	}
+	return result
 }
