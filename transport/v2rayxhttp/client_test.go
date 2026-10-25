@@ -3,6 +3,7 @@ package xhttp
 import (
 	"context"
 	"net"
+	"net/http"
 	"os"
 	"sync"
 	"testing"
@@ -66,4 +67,38 @@ func dialMarks(t *testing.T, alpn ...string) []bool {
 func TestPooledConnectionIsInternal(t *testing.T) {
 	require.Equal(t, []bool{true}, dialMarks(t))
 	require.Equal(t, []bool{false}, dialMarks(t, "h2"))
+}
+
+// An IPv6 literal goes into the Host header in brackets: bare it is no valid host, and one whose last
+// group has a letter does not even parse as a URL, so no stream opens.
+func TestRequestHostBracketsIPv6(t *testing.T) {
+	for _, test := range []struct {
+		server     string
+		tls        bool
+		serverName string
+		host       string
+		expected   string
+	}{
+		{server: "[2001:db8::abcd]:8080", expected: "[2001:db8::abcd]"},
+		{server: "[2001:db8::abcd]:443", tls: true, expected: "[2001:db8::abcd]"},
+		{server: "192.0.2.1:80", expected: "192.0.2.1"},
+		{server: "[2001:db8::1]:443", tls: true, serverName: "xhttp.example", expected: "xhttp.example"},
+		{server: "[2001:db8::1]:443", tls: true, host: "cdn.example", expected: "cdn.example"},
+	} {
+		dest := M.ParseSocksaddr(test.server)
+		var tlsConfig tls.Config
+		if test.tls {
+			var err error
+			tlsConfig, err = tls.NewClient(context.Background(), log.StdLogger(), dest.AddrString(), option.OutboundTLSOptions{
+				Enabled:    true,
+				ServerName: test.serverName,
+			})
+			require.NoError(t, err)
+		}
+		requestURL, err := getBaseRequestURL(&option.V2RayXHTTPBaseOptions{Host: test.host}, dest, tlsConfig)
+		require.NoError(t, err)
+		require.Equal(t, test.expected, requestURL.Host, test.server)
+		_, err = http.NewRequest(http.MethodGet, requestURL.String(), nil)
+		require.NoError(t, err, test.server)
+	}
 }

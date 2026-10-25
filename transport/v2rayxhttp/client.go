@@ -289,11 +289,16 @@ func getBaseRequestURL(options *option.V2RayXHTTPBaseOptions, dest M.Socksaddr, 
 		requestURL.Scheme = "https"
 	}
 	requestURL.Host = options.Host
-	if requestURL.Host == "" && tlsConfig != nil {
-		requestURL.Host = tlsConfig.ServerName()
-	}
 	if requestURL.Host == "" {
-		requestURL.Host = dest.AddrString()
+		host := dest
+		if tlsConfig != nil && tlsConfig.ServerName() != "" {
+			host = M.ParseSocksaddrHostPort(tlsConfig.ServerName(), 0)
+		}
+		if host.IsIPv6() {
+			requestURL.Host = "[" + host.AddrString() + "]"
+		} else {
+			requestURL.Host = host.AddrString()
+		}
 	}
 	requestURL.Path = options.Path
 	if err := sHTTP.URLSetPath(&requestURL, options.Path); err != nil {
