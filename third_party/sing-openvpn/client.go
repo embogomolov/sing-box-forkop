@@ -152,6 +152,11 @@ func NewClient(options ClientOptions) (*Client, error) {
 	client.dataPlane.incomingPacketDropLog.ctx = options.Context
 	client.dataPlane.outgoingPacketDropLog.logger = options.Logger
 	client.dataPlane.outgoingPacketDropLog.ctx = options.Context
+	// Read here too: sing-box check builds a client and never starts it.
+	err = client.checkSessionMaterial()
+	if err != nil {
+		return nil, err
+	}
 	return client, nil
 }
 
