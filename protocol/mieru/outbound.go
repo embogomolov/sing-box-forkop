@@ -27,6 +27,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+var _ adapter.OutboundWithMultiplex = (*Outbound)(nil)
+
 type Outbound struct {
 	outbound.Adapter
 	ctx       context.Context
@@ -65,10 +67,7 @@ func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStatePostStart {
 		return nil
 	}
-	config, err := buildMieruClientConfig(o.options, mieruDialer{
-		dialer: o.dialer,
-		shared: o.options.Multiplexing != mierupb.MultiplexingLevel_MULTIPLEXING_OFF.String(),
-	})
+	config, err := buildMieruClientConfig(o.options, mieruDialer{dialer: o.dialer, shared: o.MultiplexEnabled()})
 	if err != nil {
 		return fmt.Errorf("failed to build mieru client config: %w", err)
 	}
@@ -138,6 +137,11 @@ func (o *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		return nil, err
 	}
 	return mierucommon.NewUDPAssociateWrapper(mierucommon.NewPacketOverStreamTunnel(streamConn)), nil
+}
+
+// MultiplexEnabled reports whether connections share underlays, as they do unless multiplexing is off.
+func (o *Outbound) MultiplexEnabled() bool {
+	return o.options.Multiplexing != mierupb.MultiplexingLevel_MULTIPLEXING_OFF.String()
 }
 
 // mieruDialer is an adapter to mieru dialer interface. Unless multiplexing is off, an underlay carries

@@ -17,6 +17,10 @@ func TestPooledHTTP3ConnectionIsInternal(t *testing.T) {
 	require.Equal(t, []bool{false}, dialMarks(t, "h3"))
 }
 
+func TestMultiplexOverHTTP3(t *testing.T) {
+	require.True(t, multiplexReported(t, option.V2RayXHTTPOptions{}, "h3"))
+}
+
 // The Chrome profile of quic-go refuses a TLS configuration that verifies the server by itself.
 func TestChromeParrotLeavesWhatItRefuses(t *testing.T) {
 	for _, test := range []struct {

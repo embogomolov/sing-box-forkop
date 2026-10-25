@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/interrupt"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/log"
@@ -101,4 +102,20 @@ func TestRequestHostBracketsIPv6(t *testing.T) {
 		_, err = http.NewRequest(http.MethodGet, requestURL.String(), nil)
 		require.NoError(t, err, test.server)
 	}
+}
+
+func multiplexReported(t *testing.T, options option.V2RayXHTTPOptions, alpn ...string) bool {
+	client, err := NewClient(context.Background(), &markDialer{}, M.ParseSocksaddr("127.0.0.1:443"), options, testTLSConfig(t, alpn...))
+	require.NoError(t, err)
+	defer client.Close()
+	multiplexClient, isMultiplex := client.(adapter.V2RayMultiplexClientTransport)
+	return isMultiplex && multiplexClient.MultiplexEnabled()
+}
+
+// A URL test warms a session up only when the measured request reuses it: pooled connections on both sides.
+func TestMultiplexFollowsHTTPVersion(t *testing.T) {
+	require.False(t, multiplexReported(t, option.V2RayXHTTPOptions{}))
+	require.True(t, multiplexReported(t, option.V2RayXHTTPOptions{}, "h2"))
+	download := &option.V2RayXHTTPDownloadOptions{ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 80}}
+	require.False(t, multiplexReported(t, option.V2RayXHTTPOptions{Download: download}, "h2"))
 }

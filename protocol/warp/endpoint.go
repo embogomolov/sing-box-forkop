@@ -32,6 +32,8 @@ var (
 	profileRetryMaxDelay     = time.Minute
 )
 
+var _ adapter.OutboundWithMultiplex = (*Endpoint)(nil)
+
 func RegisterEndpoint(registry *endpoint.Registry) {
 	endpoint.Register[option.WARPEndpointOptions](registry, C.TypeWARP, NewEndpoint)
 }
@@ -303,6 +305,10 @@ func (w *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		return nil, err
 	}
 	return endpoint.ListenPacket(ctx, destination)
+}
+
+func (w *Endpoint) MultiplexEnabled() bool {
+	return true
 }
 
 func (w *Endpoint) initializedEndpoint(ctx context.Context) (adapter.Endpoint, error) {

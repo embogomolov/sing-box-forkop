@@ -30,7 +30,10 @@ const appName = "sing-box"
 // defaultIdleTimeout applies when the node sets no idle window.
 const defaultIdleTimeout = 5 * time.Minute
 
-var _ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+var (
+	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
+)
 
 func RegisterOutbound(registry *outbound.Registry) {
 	outbound.Register[option.TrustTunnelOutboundOptions](registry, C.TypeTrustTunnel, NewOutbound)
@@ -215,6 +218,10 @@ func (h *Outbound) lookup(ctx context.Context, domain string) (netip.Addr, error
 		return netip.Addr{}, E.New("resolve ", domain, ": empty result")
 	}
 	return addresses[0], nil
+}
+
+func (h *Outbound) MultiplexEnabled() bool {
+	return true
 }
 
 // InterfaceUpdated drops the session: QUIC migration is off on the official

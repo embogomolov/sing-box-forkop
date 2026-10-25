@@ -32,6 +32,8 @@ import (
 	"golang.org/x/net/http2"
 )
 
+var _ adapter.V2RayMultiplexClientTransport = (*Client)(nil)
+
 type Client struct {
 	ctx             context.Context
 	options         *option.V2RayXHTTPOptions
@@ -41,6 +43,7 @@ type Client struct {
 	getHTTPClient2  func() (DialerClient, *XmuxClient)
 	xmuxManager     *XmuxManager
 	xmuxManager2    *XmuxManager
+	multiplex       bool
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayXHTTPOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
@@ -77,6 +80,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	baseRequestURL2 := baseRequestURL
 	getHTTPClient2 := getHTTPClient
 	var xmuxManager2 *XmuxManager
+	multiplex := decideHTTPVersion(tlsConfig) != "1.1"
 	if options.Download != nil {
 		options2 := options.Download
 		dialer2 := dialer
@@ -101,6 +105,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		if !C.WithQUIC && decideHTTPVersion(tlsConfig2) == "3" {
 			return nil, C.ErrQUICNotIncluded
 		}
+		multiplex = multiplex && decideHTTPVersion(tlsConfig2) != "1.1"
 		baseRequestURL2, err = getBaseRequestURL(&options2.V2RayXHTTPBaseOptions, dest2, tlsConfig2)
 		if err != nil {
 			return nil, err
@@ -126,6 +131,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		baseRequestURL2: baseRequestURL2,
 		xmuxManager:     xmuxManager,
 		xmuxManager2:    xmuxManager2,
+		multiplex:       multiplex,
 	}, nil
 }
 
@@ -261,6 +267,11 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		}
 	}()
 	return &conn, nil
+}
+
+// MultiplexEnabled reports pooled HTTP/2 and HTTP/3 connections; over HTTP/1.1 a download opens its own.
+func (c *Client) MultiplexEnabled() bool {
+	return c.multiplex
 }
 
 func (c *Client) Close() error {

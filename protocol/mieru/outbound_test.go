@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/common/interrupt"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -83,5 +84,21 @@ func TestSharedUnderlayIsInternal(t *testing.T) {
 		require.Equal(t, []bool{false}, underlayMarks(t, transport, ""), transport)
 		require.Equal(t, []bool{false}, underlayMarks(t, transport, "MULTIPLEXING_HIGH"), transport)
 		require.Equal(t, []bool{true}, underlayMarks(t, transport, "MULTIPLEXING_OFF"), transport)
+	}
+}
+
+// A URL test warms an underlay up first only when the measured connection may reuse it.
+func TestOutboundReportsSharedUnderlays(t *testing.T) {
+	for multiplexing, expected := range map[string]bool{"": true, "MULTIPLEXING_LOW": true, "MULTIPLEXING_OFF": false} {
+		instance, err := NewOutbound(context.Background(), nil, log.NewNOPFactory().Logger(), "mieru", option.MieruOutboundOptions{
+			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 4443},
+			Transport:     "TCP",
+			UserName:      "user",
+			Password:      "secret",
+			Multiplexing:  multiplexing,
+		})
+		require.NoError(t, err)
+		multiplexOutbound, isMultiplex := common.Cast[adapter.OutboundWithMultiplex](instance)
+		require.Equal(t, expected, isMultiplex && multiplexOutbound.MultiplexEnabled(), multiplexing)
 	}
 }

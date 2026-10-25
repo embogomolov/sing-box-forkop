@@ -10,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box/common/cloudflare"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -247,5 +248,13 @@ func TestWARPProfileRetryFailsDialsAndStopsOnClose(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("profile retries did not stop when the endpoint closed")
+	}
+}
+
+// A URL test warms the WireGuard session up, also before the profile has brought the endpoint up.
+func TestWARPEndpointReportsWireGuardSession(t *testing.T) {
+	multiplexOutbound, isMultiplex := common.Cast[adapter.OutboundWithMultiplex](&Endpoint{})
+	if !isMultiplex || !multiplexOutbound.MultiplexEnabled() {
+		t.Fatal("WARP did not report its WireGuard session")
 	}
 }

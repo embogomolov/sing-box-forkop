@@ -16,6 +16,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
@@ -175,5 +176,18 @@ func TestOutboundSessionIsInternal(t *testing.T) {
 			t.Errorf("quic %v: session dials marked external %v, want one internal", quic, detour.external)
 		}
 		detour.access.Unlock()
+	}
+}
+
+// A URL test warms the session up first, so that its delay leaves out the session's handshakes.
+func TestOutboundReportsSession(t *testing.T) {
+	instance, err := NewOutbound(context.Background(), nil, log.NewNOPFactory().Logger(), "tt", validOutboundOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.(*Outbound).Close()
+	multiplexOutbound, isMultiplex := common.Cast[adapter.OutboundWithMultiplex](instance)
+	if !isMultiplex || !multiplexOutbound.MultiplexEnabled() {
+		t.Fatal("TrustTunnel did not report its session")
 	}
 }
