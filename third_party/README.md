@@ -11,5 +11,5 @@ upstream's `require` line and replaces the module with the directory;
 | --- | --- | --- | --- |
 | wireguard-go | github.com/sagernet/wireguard-go | v0.0.8-0.20260929150556-6731c7387c81 | h1:VsrjoaljEz7jQ1LWbrNyf/scQSQIkVVp7v4nSDrPJ+I= |
 | gvisor | github.com/sagernet/gvisor | v0.0.0-20260727.0-sing-box-mod.1 | h1:IdQ7yTKkB2wv8txwshxUroPlO4npOYAV71xb7xQ7Lys= |
-| sing-openvpn | github.com/sagernet/sing-openvpn | v0.1.1-0.20260929151220-7c3045dbddce | h1:uB2DkIJLZ9waR/ZLBO9IF/ws5BWg0FEegLi90ibhX5I= |
+| sing-openvpn | github.com/sagernet/sing-openvpn | v0.1.1-0.20261020061838-432d37b47c92 | h1:bMFGGGy7Kp+3ffTfPshTN3vmcyiDJP+ZTNCdP8B4KYo= |
 | sing-vmess | github.com/sagernet/sing-vmess | v0.2.9-0.20261019223527-a0c58542bd9d | h1:K93710Sq6/TFl3GVs+NclQ3I+KPXFLluSsUFC0Sm0N8= |
