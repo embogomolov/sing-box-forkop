@@ -66,10 +66,6 @@ type _Settings struct {
 // Settings is one XHTTP configuration as the subscription wrote it.
 type Settings _Settings
 
-// DefaultPaddingBytes is the padding range Xray assumes when none is given;
-// sing-box refuses an unset one.
-var DefaultPaddingBytes = option.Range[int]{From: 100, To: 1000}
-
 type XmuxSettings struct {
 	MaxConcurrency   *subscription.Range `json:"maxConcurrency"`
 	MaxConnections   *subscription.Range `json:"maxConnections"`
@@ -237,17 +233,8 @@ func (s Settings) Base() (option.V2RayXHTTPBaseOptions, error) {
 	return base, nil
 }
 
-// Normalize fills in what a server assumes for the settings that are left out:
-// Xray's padding range, then whatever sing-box's own decoder defaults.
+// Normalize fills in what sing-box's decoder defaults for the settings that are left out.
 func Normalize(options option.V2RayXHTTPOptions) (option.V2RayXHTTPOptions, error) {
-	if options.XPaddingBytes.To == 0 {
-		options.XPaddingBytes = DefaultPaddingBytes
-	}
-	if options.Download != nil && options.Download.XPaddingBytes.To == 0 {
-		download := *options.Download
-		download.XPaddingBytes = DefaultPaddingBytes
-		options.Download = &download
-	}
 	encoded, err := json.Marshal(options)
 	if err != nil {
 		return options, err

@@ -234,7 +234,9 @@ func checkV2RayXHTTPBaseOptions(mode string, options *V2RayXHTTPBaseOptions) err
 		}
 	}
 
-	if options.XPaddingBytes.From <= 0 || options.XPaddingBytes.To <= 0 {
+	if options.XPaddingBytes == (Range[int]{}) {
+		options.XPaddingBytes = options.GetNormalizedXPaddingBytes()
+	} else if options.XPaddingBytes.From <= 0 || options.XPaddingBytes.To <= 0 {
 		return E.New("x_padding_bytes cannot be disabled")
 	}
 

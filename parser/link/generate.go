@@ -556,16 +556,6 @@ func canonicalizeShareLinkTransport(value map[string]any) {
 	if source == nil {
 		return
 	}
-	// sing-box refuses to read an XHTTP transport that names no padding range,
-	// so an outbound written without one has to be given Xray's default before
-	// it can be normalised at all.
-	if source["type"] == C.V2RayTransportTypeXHTTP {
-		for _, leg := range []map[string]any{source, mapValue(source["download"])} {
-			if padding, isSet := leg["x_padding_bytes"]; leg != nil && (!isSet || padding == float64(0)) {
-				leg["x_padding_bytes"] = xhttp.DefaultPaddingBytes.String()
-			}
-		}
-	}
 	encoded, err := json.Marshal(source)
 	if err != nil {
 		return
