@@ -64,6 +64,7 @@ type Server struct {
 	externalUI               string
 	externalUIDownloadURL    string
 	externalUIDownloadDetour string
+	externalUIAccess         sync.Mutex
 }
 
 func NewServer(ctx context.Context, logFactory log.ObservableFactory, options option.ClashAPIOptions) (adapter.LifecycleService, error) {
@@ -162,7 +163,8 @@ func (s *Server) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		return nil
 	}
 	if s.externalController {
-		s.checkAndDownloadExternalUI()
+		// the controller does not wait for the archive: GitHub may be slow or out of reach
+		go s.checkAndDownloadExternalUI()
 		scope.Add(s.close)
 		listener, err := s.listen()
 		if err != nil {

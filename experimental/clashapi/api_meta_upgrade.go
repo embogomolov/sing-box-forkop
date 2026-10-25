@@ -23,7 +23,7 @@ func updateExternalUI(server *Server) func(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		server.logger.Info("upgrading external UI")
-		err := server.downloadExternalUI()
+		err := server.downloadExternalUI(r.Context())
 		if err != nil {
 			server.logger.Error(E.Cause(err, "upgrade external ui"))
 			render.Status(r, http.StatusInternalServerError)

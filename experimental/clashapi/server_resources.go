@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -19,6 +20,9 @@ import (
 	"github.com/sagernet/sing/service/filemanager"
 )
 
+// externalUIDownloadTimeout bounds a download of the external UI, 4.6 MB for Yacd-meta.
+const externalUIDownloadTimeout = 5 * time.Minute
+
 func (s *Server) checkAndDownloadExternalUI() {
 	if s.externalUI == "" {
 		return
@@ -27,15 +31,19 @@ func (s *Server) checkAndDownloadExternalUI() {
 	if err != nil {
 		filemanager.MkdirAll(s.ctx, s.externalUI, 0o755)
 	}
-	if len(entries) == 0 {
-		err = s.downloadExternalUI()
-		if err != nil {
+	// the staging directory alone is an update that did not end, not an external UI
+	if len(entries) == 0 || len(entries) == 1 && entries[0].Name() == externalUIStaging {
+		err = s.downloadExternalUI(s.ctx)
+		if err != nil && s.ctx.Err() == nil {
 			s.logger.Error("download external ui error: ", err)
 		}
 	}
 }
 
-func (s *Server) downloadExternalUI() error {
+// downloadExternalUI downloads the external UI into its directory, one download at a time.
+func (s *Server) downloadExternalUI(ctx context.Context) error {
+	s.externalUIAccess.Lock()
+	defer s.externalUIAccess.Unlock()
 	var downloadURL string
 	if s.externalUIDownloadURL != "" {
 		downloadURL = s.externalUIDownloadURL
@@ -55,6 +63,7 @@ func (s *Server) downloadExternalUI() error {
 	}
 	s.logger.Info("downloading external ui using outbound/", detour.Type(), "[", detour.Tag(), "]")
 	httpClient := &http.Client{
+		Timeout: externalUIDownloadTimeout,
 		Transport: &http.Transport{
 			ForceAttemptHTTP2:   true,
 			TLSHandshakeTimeout: C.TCPTimeout,
@@ -68,7 +77,11 @@ func (s *Server) downloadExternalUI() error {
 		},
 	}
 	defer httpClient.CloseIdleConnections()
-	response, err := httpClient.Get(downloadURL)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return err
+	}
+	response, err := httpClient.Do(request)
 	if err != nil {
 		return err
 	}
