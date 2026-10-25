@@ -37,6 +37,7 @@ var _ adapter.V2RayMultiplexClientTransport = (*Client)(nil)
 type Client struct {
 	ctx             context.Context
 	options         *option.V2RayXHTTPOptions
+	mode            string
 	baseRequestURL  url.URL
 	baseRequestURL2 url.URL
 	getHTTPClient   func() (DialerClient, *XmuxClient)
@@ -125,6 +126,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	return &Client{
 		ctx:             ctx,
 		options:         &options,
+		mode:            resolveMode(options.Mode, tlsConfig, options.Download != nil),
 		getHTTPClient:   getHTTPClient,
 		getHTTPClient2:  getHTTPClient2,
 		baseRequestURL:  baseRequestURL,
@@ -137,9 +139,9 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	options := c.options
-	mode := c.options.Mode
+	mode := c.mode
 	sessionId := ""
-	if c.options.Mode != "stream-one" {
+	if mode != "stream-one" {
 		sessionId = GenerateSessionID(&c.options.V2RayXHTTPBaseOptions)
 	}
 	requestURL := c.baseRequestURL
@@ -280,6 +282,32 @@ func (c *Client) Close() error {
 		c.xmuxManager2.Close()
 	}
 	return nil
+}
+
+// resolveMode picks the mode auto stands for as Xray's dialer does: stream-one over REALITY, which no CDN
+// can stand in front of, stream-up there with a download leg, and packet-up otherwise.
+func resolveMode(mode string, tlsConfig tls.Config, download bool) string {
+	if mode != "" && mode != "auto" {
+		return mode
+	}
+	if !isReality(tlsConfig) {
+		return "packet-up"
+	}
+	if download {
+		return "stream-up"
+	}
+	return "stream-one"
+}
+
+func isReality(tlsConfig tls.Config) bool {
+	switch config := tlsConfig.(type) {
+	case *tls.RealityClientConfig:
+		return true
+	case *tls.KTLSClientConfig:
+		return isReality(config.Config)
+	default:
+		return false
+	}
 }
 
 func decideHTTPVersion(tlsConfig tls.Config) string {
