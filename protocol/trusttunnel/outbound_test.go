@@ -2,14 +2,25 @@ package trusttunnel
 
 import (
 	"context"
+	"net"
+	"os"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 func validOutboundOptions() option.TrustTunnelOutboundOptions {
@@ -108,5 +119,61 @@ func TestOutboundIdleWindow(t *testing.T) {
 		if got := idleWindow(testCase.node); got != testCase.want {
 			t.Errorf("idleWindow(%v) = %v, want %v", testCase.node, got, testCase.want)
 		}
+	}
+}
+
+// markOutbound refuses every dial and notes whether it was asked for an external connection.
+type markOutbound struct {
+	outbound.Adapter
+	access   sync.Mutex
+	external []bool
+}
+
+func (o *markOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	o.access.Lock()
+	o.external = append(o.external, interrupt.IsExternalConnectionFromContext(ctx))
+	o.access.Unlock()
+	return nil, E.New("refused")
+}
+
+func (o *markOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return nil, os.ErrInvalid
+}
+
+type markOutboundManager struct {
+	adapter.OutboundManager
+	outbound adapter.Outbound
+}
+
+func (m *markOutboundManager) Outbound(tag string) (adapter.Outbound, bool) {
+	return m.outbound, tag == m.outbound.Tag()
+}
+
+// A group switching members without interrupt_exist_connections closes only internal connections; an
+// external session would carry the streams opened after the switch through the old member.
+func TestOutboundSessionIsInternal(t *testing.T) {
+	for _, quic := range []bool{false, true} {
+		if quic && !C.WithQUIC {
+			continue
+		}
+		detour := &markOutbound{Adapter: outbound.NewAdapter("test", "detour", []string{N.NetworkTCP, N.NetworkUDP}, nil)}
+		ctx := service.ContextWith[adapter.OutboundManager](context.Background(), &markOutboundManager{outbound: detour})
+		options := validOutboundOptions()
+		options.Detour = "detour"
+		options.QUIC = quic
+		instance, err := NewOutbound(ctx, nil, log.NewNOPFactory().Logger(), "tt", options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = instance.DialContext(interrupt.ContextWithIsExternalConnection(context.Background(), true), N.NetworkTCP, M.ParseSocksaddr("1.1.1.1:443"))
+		instance.(*Outbound).Close()
+		if err == nil {
+			t.Fatalf("quic %v: a refused session dial opened a stream", quic)
+		}
+		detour.access.Lock()
+		if !slices.Equal(detour.external, []bool{false}) {
+			t.Errorf("quic %v: session dials marked external %v, want one internal", quic, detour.external)
+		}
+		detour.access.Unlock()
 	}
 }

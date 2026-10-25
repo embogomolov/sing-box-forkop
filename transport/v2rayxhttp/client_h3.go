@@ -10,6 +10,7 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/congestion"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/common/xray/net"
@@ -41,6 +42,7 @@ func newHTTP3Transport(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, o
 	return &http3.Transport{
 		QUICConfig: quicConfig,
 		Dial: func(ctx context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
+			ctx = adapter.ContextForMultiplexSession(ctx)
 			udpConn, dErr := dialer.DialContext(ctx, N.NetworkUDP, dest)
 			if dErr != nil {
 				return nil, dErr

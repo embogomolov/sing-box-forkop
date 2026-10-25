@@ -65,7 +65,10 @@ func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStatePostStart {
 		return nil
 	}
-	config, err := buildMieruClientConfig(o.options, mieruDialer{dialer: o.dialer})
+	config, err := buildMieruClientConfig(o.options, mieruDialer{
+		dialer: o.dialer,
+		shared: o.options.Multiplexing != mierupb.MultiplexingLevel_MULTIPLEXING_OFF.String(),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to build mieru client config: %w", err)
 	}
@@ -137,17 +140,25 @@ func (o *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return mierucommon.NewUDPAssociateWrapper(mierucommon.NewPacketOverStreamTunnel(streamConn)), nil
 }
 
-// mieruDialer is an adapter to mieru dialer interface.
+// mieruDialer is an adapter to mieru dialer interface. Unless multiplexing is off, an underlay carries
+// later connections too, so it does not take the interrupt mark of the one that opened it.
 type mieruDialer struct {
 	dialer N.Dialer
+	shared bool
 }
 
 func (md mieruDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if md.shared {
+		ctx = adapter.ContextForMultiplexSession(ctx)
+	}
 	addr := M.ParseSocksaddr(address)
 	return md.dialer.DialContext(ctx, network, addr)
 }
 
 func (md mieruDialer) ListenPacket(ctx context.Context, network, laddr, raddr string) (net.PacketConn, error) {
+	if md.shared {
+		ctx = adapter.ContextForMultiplexSession(ctx)
+	}
 	addr := M.ParseSocksaddr(raddr)
 	return md.dialer.ListenPacket(ctx, addr)
 }

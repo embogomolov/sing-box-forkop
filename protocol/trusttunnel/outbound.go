@@ -103,7 +103,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	client, err := trusttunnel.NewClient(trusttunnel.ClientOptions{
 		Context:   ctx,
 		Logger:    logger,
-		Dialer:    outboundDialer,
+		Dialer:    sessionDialer{outboundDialer},
 		Server:    options.ServerOptions.Build(),
 		TLSConfig: tlsConfig,
 		Protocol:  protocol,
@@ -126,6 +126,20 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		dnsRouter:    service.FromContext[adapter.DNSRouter](ctx),
 		queryOptions: queryOptions,
 	}, nil
+}
+
+// sessionDialer dials the session every stream shares, so that it does not inherit the
+// interrupt mark of the stream that happened to open it.
+type sessionDialer struct {
+	N.Dialer
+}
+
+func (d sessionDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	return d.Dialer.DialContext(adapter.ContextForMultiplexSession(ctx), network, destination)
+}
+
+func (d sessionDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return d.Dialer.ListenPacket(adapter.ContextForMultiplexSession(ctx), destination)
 }
 
 // idleWindow picks the session's idle teardown: the node's own idle_timeout

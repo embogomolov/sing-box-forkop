@@ -9,7 +9,13 @@ import (
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+
+	"github.com/stretchr/testify/require"
 )
+
+func TestPooledHTTP3ConnectionIsInternal(t *testing.T) {
+	require.Equal(t, []bool{false}, dialMarks(t, "h3"))
+}
 
 // The Chrome profile of quic-go refuses a TLS configuration that verifies the server by itself.
 func TestChromeParrotLeavesWhatItRefuses(t *testing.T) {
