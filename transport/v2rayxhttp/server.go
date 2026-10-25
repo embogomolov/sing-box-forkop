@@ -418,10 +418,21 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) network() string {
-	if s.tlsConfig != nil && len(s.tlsConfig.NextProtos()) == 1 && s.tlsConfig.NextProtos()[0] == "h3" {
+	if s.tlsConfig != nil && HTTPVersion(isRealityServer(s.tlsConfig), s.tlsConfig.NextProtos()) == "3" {
 		return N.NetworkUDP
 	}
 	return N.NetworkTCP
+}
+
+func isRealityServer(tlsConfig tls.ServerConfig) bool {
+	switch config := tlsConfig.(type) {
+	case *tls.RealityServerConfig:
+		return true
+	case *tls.KTlSServerConfig:
+		return isRealityServer(config.ServerConfig)
+	default:
+		return false
+	}
 }
 
 func (s *Server) upsertSession(sessionId string) *httpSession {

@@ -311,13 +311,26 @@ func isReality(tlsConfig tls.Config) bool {
 }
 
 func decideHTTPVersion(tlsConfig tls.Config) string {
-	if tlsConfig == nil || len(tlsConfig.NextProtos()) == 0 || tlsConfig.NextProtos()[0] == "http/1.1" {
+	if tlsConfig == nil {
 		return "1.1"
 	}
-	if tlsConfig.NextProtos()[0] == "h3" {
-		return "3"
+	return HTTPVersion(isReality(tlsConfig), tlsConfig.NextProtos())
+}
+
+// HTTPVersion is the HTTP version Xray's XHTTP client speaks over TLS, the rule its server listens by:
+// HTTP/2 over REALITY, and otherwise HTTP/1.1 or HTTP/3 only for an ALPN of http/1.1 or h3 alone.
+func HTTPVersion(reality bool, alpn []string) string {
+	if reality || len(alpn) != 1 {
+		return "2"
 	}
-	return "2"
+	switch alpn[0] {
+	case "http/1.1":
+		return "1.1"
+	case "h3":
+		return "3"
+	default:
+		return "2"
+	}
 }
 
 func getBaseRequestURL(options *option.V2RayXHTTPBaseOptions, dest M.Socksaddr, tlsConfig tls.Config) (url.URL, error) {

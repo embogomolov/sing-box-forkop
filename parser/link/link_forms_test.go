@@ -252,7 +252,13 @@ func TestLinkXHTTPOverHTTP3HasNoFingerprint(t *testing.T) {
 	if download := options.Transport.XHTTPOptions.Download; download.TLS.UTLS != nil {
 		t.Errorf("the HTTP/3 download leg kept the fingerprint %+v", download.TLS.UTLS)
 	}
-	if tls := parsedVLESS(t, "vless://"+xrayTestUUID+"@up.example:443?security=tls&alpn=h2&type=xhttp&path=%2Fx#n").TLS; tls.UTLS == nil {
-		t.Error("an HTTP/2 leg lost its fingerprint")
+	for _, query := range []string{
+		"security=tls&alpn=h2",
+		"security=tls&alpn=h3%2Ch2",
+		"security=reality&pbk=SSw7I859PPdN4DQ7fxV9fobXM61Ms3mqZRlIY1aJvHQ&sid=5a&alpn=h3",
+	} {
+		if tls := parsedVLESS(t, "vless://"+xrayTestUUID+"@up.example:443?"+query+"&type=xhttp&path=%2Fx#n").TLS; tls.UTLS == nil {
+			t.Errorf("%s: an HTTP/2 leg lost its fingerprint", query)
+		}
 	}
 }

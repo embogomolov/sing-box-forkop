@@ -2,6 +2,7 @@ package xhttp
 
 import (
 	"context"
+	"encoding/base64"
 	"net"
 	"net/http"
 	"os"
@@ -102,6 +103,40 @@ func TestRequestHostBracketsIPv6(t *testing.T) {
 		_, err = http.NewRequest(http.MethodGet, requestURL.String(), nil)
 		require.NoError(t, err, test.server)
 	}
+}
+
+// An Xray server listens on the HTTP version its client picks, so a node built for one has to pick the same.
+func TestHTTPVersionFollowsXray(t *testing.T) {
+	publicKey := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	for _, test := range []struct {
+		alpn      []string
+		reality   bool
+		kernelTLS bool
+		version   string
+	}{
+		{version: "2"},
+		{alpn: []string{"h2"}, version: "2"},
+		{alpn: []string{"http/1.1"}, version: "1.1"},
+		{alpn: []string{"h3"}, version: "3"},
+		{alpn: []string{"http/1.1", "h2"}, version: "2"},
+		{alpn: []string{"h3", "h2"}, version: "2"},
+		{alpn: []string{"h3"}, reality: true, version: "2"},
+		{alpn: []string{"http/1.1"}, reality: true, version: "2"},
+		{alpn: []string{"h3"}, reality: true, kernelTLS: true, version: "2"},
+	} {
+		options := option.OutboundTLSOptions{Enabled: true, ServerName: "xhttp.example", ALPN: test.alpn}
+		if test.reality {
+			options.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: "chrome"}
+			options.Reality = &option.OutboundRealityOptions{Enabled: true, PublicKey: publicKey}
+		}
+		tlsConfig, err := tls.NewClient(context.Background(), log.StdLogger(), "xhttp.example", options)
+		require.NoError(t, err)
+		if test.kernelTLS {
+			tlsConfig = &tls.KTLSClientConfig{Config: tlsConfig}
+		}
+		require.Equal(t, test.version, decideHTTPVersion(tlsConfig), "alpn %q, reality %v, kTLS %v", test.alpn, test.reality, test.kernelTLS)
+	}
+	require.Equal(t, "1.1", decideHTTPVersion(nil))
 }
 
 func multiplexReported(t *testing.T, options option.V2RayXHTTPOptions, alpn ...string) bool {

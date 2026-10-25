@@ -10,6 +10,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/vless/encryption"
+	xhttp "github.com/sagernet/sing-box/transport/v2rayxhttp"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badoption"
@@ -309,7 +310,7 @@ func XHTTPOverQUIC(outbound option.Outbound) {
 		return
 	}
 	for _, leg := range []*option.OutboundTLSOptions{tls, downloadTLS(transport.XHTTPOptions.Download)} {
-		if leg != nil && len(leg.ALPN) > 0 && leg.ALPN[0] == "h3" {
+		if leg != nil && xhttp.HTTPVersion(leg.Reality != nil && leg.Reality.Enabled, leg.ALPN) == "3" {
 			leg.UTLS = nil
 		}
 	}
