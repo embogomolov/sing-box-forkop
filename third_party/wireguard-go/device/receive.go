@@ -68,7 +68,7 @@ func (peer *Peer) keepKeyFreshReceiving() {
 		return
 	}
 	keypair := peer.keypairs.Current()
-	if keypair != nil && keypair.isInitiator && time.Since(keypair.created) > peer.device.keyRefreshTimeoutReceiving() {
+	if keypair != nil && keypair.isInitiator && sinceIncludingSleep(keypair.created) > peer.device.keyRefreshTimeoutReceiving() {
 		peer.timers.sentLastMinuteHandshake.Store(true)
 		peer.SendHandshakeInitiation(false)
 	}
@@ -232,7 +232,7 @@ func (device *Device) RoutineReceiveIncoming(
 
 				// check keypair expiry
 
-				if keypair.created.Add(device.keychainExpireTime()).Before(time.Now()) {
+				if sinceIncludingSleep(keypair.created) > device.keychainExpireTime() {
 					continue
 				}
 
