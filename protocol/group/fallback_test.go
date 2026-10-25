@@ -32,12 +32,27 @@ type fallbackHealthTestOutbound struct {
 
 type fallbackHistoryGroupOutbound struct {
 	*fallbackHealthTestOutbound
-	selected string
+	selected adapter.Outbound
 }
 
-func (o *fallbackHistoryGroupOutbound) Now() string { return o.selected }
+func (o *fallbackHistoryGroupOutbound) All() []string {
+	if o.selected == nil {
+		return nil
+	}
+	return []string{o.selected.Tag()}
+}
 
-func (o *fallbackHistoryGroupOutbound) All() []string { return []string{o.selected} }
+func (o *fallbackHistoryGroupOutbound) Selected(string) adapter.Outbound { return o.selected }
+
+func (o *fallbackHistoryGroupOutbound) AttachConnection(io.Closer) func() { return func() {} }
+
+// selectedTag is the member a group reports for TCP, or "" without one.
+func selectedTag(group adapter.OutboundGroup) string {
+	if selected := group.Selected(N.NetworkTCP); selected != nil {
+		return selected.Tag()
+	}
+	return ""
+}
 
 func (o *fallbackHealthTestOutbound) setAvailable(available bool) {
 	o.access.Lock()
@@ -333,14 +348,14 @@ func TestFallbackHealthCheckFailsOverAndRecoversPriority(t *testing.T) {
 		fallbackCandidate{tag: secondary.Tag(), outbound: secondary},
 	)
 	fallback.checkOutbounds(context.Background(), 0)
-	if fallback.Now() != secondary.Tag() {
-		t.Fatalf("Fallback did not select healthy lower priority: %q", fallback.Now())
+	if selectedTag(fallback) != secondary.Tag() {
+		t.Fatalf("Fallback did not select healthy lower priority: %q", selectedTag(fallback))
 	}
 
 	primary.setAvailable(true)
 	fallback.checkOutbounds(context.Background(), 0)
-	if fallback.Now() != primary.Tag() {
-		t.Fatalf("Fallback did not recover higher priority: %q", fallback.Now())
+	if selectedTag(fallback) != primary.Tag() {
+		t.Fatalf("Fallback did not recover higher priority: %q", selectedTag(fallback))
 	}
 }
 
@@ -361,7 +376,7 @@ func TestFallbackManualURLTestUsesConfiguredStatus(t *testing.T) {
 func TestFallbackStoresHistoryUnderRealOutboundTag(t *testing.T) {
 	group := &fallbackHistoryGroupOutbound{
 		fallbackHealthTestOutbound: newFallbackHealthTestOutbound("group", true),
-		selected:                   "node",
+		selected:                   newFallbackHealthTestOutbound("node", true),
 	}
 	fallback := newTestFallback(fallbackCandidate{tag: group.Tag(), outbound: group})
 
@@ -410,8 +425,8 @@ func TestFallbackDialsUnhealthyMembersAsLastResort(t *testing.T) {
 		fallbackCandidate{tag: secondary.Tag(), outbound: secondary},
 	)
 	fallback.checkOutbounds(context.Background(), 0)
-	if fallback.Now() != primary.Tag() {
-		t.Fatalf("a fully unhealthy group must still report its first member: %q", fallback.Now())
+	if selectedTag(fallback) != primary.Tag() {
+		t.Fatalf("a fully unhealthy group must still report its first member: %q", selectedTag(fallback))
 	}
 
 	primary.setAvailable(true)
@@ -435,14 +450,14 @@ func TestFallbackPinsAndReleasesSelectedOutbound(t *testing.T) {
 		fallbackCandidate{tag: secondary.Tag(), outbound: secondary},
 	)
 	fallback.checkOutbounds(context.Background(), 0)
-	if fallback.Now() != primary.Tag() {
-		t.Fatalf("unexpected automatic selection: %q", fallback.Now())
+	if selectedTag(fallback) != primary.Tag() {
+		t.Fatalf("unexpected automatic selection: %q", selectedTag(fallback))
 	}
 	if fallback.SelectOutbound("missing") {
 		t.Fatal("Fallback pinned an outbound that is not a member")
 	}
-	if !fallback.SelectOutbound(secondary.Tag()) || fallback.Now() != secondary.Tag() || fallback.Fixed() != secondary.Tag() {
-		t.Fatalf("Fallback did not honour the manual pin: now=%q fixed=%q", fallback.Now(), fallback.Fixed())
+	if !fallback.SelectOutbound(secondary.Tag()) || selectedTag(fallback) != secondary.Tag() || fallback.Fixed() != secondary.Tag() {
+		t.Fatalf("Fallback did not honour the manual pin: now=%q fixed=%q", selectedTag(fallback), fallback.Fixed())
 	}
 
 	primary.dialCount = 0
@@ -456,8 +471,8 @@ func TestFallbackPinsAndReleasesSelectedOutbound(t *testing.T) {
 		t.Fatalf("pinned member was not dialed first: primary=%d secondary=%d", primary.dialCount, secondary.dialCount)
 	}
 
-	if !fallback.SelectOutbound("") || fallback.Fixed() != "" || fallback.Now() != primary.Tag() {
-		t.Fatalf("Fallback did not release the pin on request: now=%q fixed=%q", fallback.Now(), fallback.Fixed())
+	if !fallback.SelectOutbound("") || fallback.Fixed() != "" || selectedTag(fallback) != primary.Tag() {
+		t.Fatalf("Fallback did not release the pin on request: now=%q fixed=%q", selectedTag(fallback), fallback.Fixed())
 	}
 
 	if !fallback.SelectOutbound(secondary.Tag()) {
@@ -465,8 +480,8 @@ func TestFallbackPinsAndReleasesSelectedOutbound(t *testing.T) {
 	}
 	secondary.setAvailable(false)
 	fallback.checkOutbounds(context.Background(), 0)
-	if fallback.Fixed() != "" || fallback.Now() != primary.Tag() {
-		t.Fatalf("Fallback did not release a dead pin: now=%q fixed=%q", fallback.Now(), fallback.Fixed())
+	if fallback.Fixed() != "" || selectedTag(fallback) != primary.Tag() {
+		t.Fatalf("Fallback did not release a dead pin: now=%q fixed=%q", selectedTag(fallback), fallback.Fixed())
 	}
 }
 
@@ -481,15 +496,15 @@ func TestFallbackRetestsADownMemberBeforePinningIt(t *testing.T) {
 	)
 	fallback.checkOutbounds(context.Background(), 0)
 	secondary.setAvailable(true)
-	if !fallback.SelectOutbound(secondary.Tag()) || fallback.Fixed() != secondary.Tag() || fallback.Now() != secondary.Tag() {
-		t.Fatalf("a member that came back was not pinned: now=%q fixed=%q", fallback.Now(), fallback.Fixed())
+	if !fallback.SelectOutbound(secondary.Tag()) || fallback.Fixed() != secondary.Tag() || selectedTag(fallback) != secondary.Tag() {
+		t.Fatalf("a member that came back was not pinned: now=%q fixed=%q", selectedTag(fallback), fallback.Fixed())
 	}
 
 	primary.setAvailable(false)
 	fallback.checkOutbounds(context.Background(), 0)
 	dials := primary.dialCount
-	if !fallback.SelectOutbound(primary.Tag()) || fallback.Fixed() != "" || fallback.Now() != secondary.Tag() {
-		t.Fatalf("a member still down was pinned: now=%q fixed=%q", fallback.Now(), fallback.Fixed())
+	if !fallback.SelectOutbound(primary.Tag()) || fallback.Fixed() != "" || selectedTag(fallback) != secondary.Tag() {
+		t.Fatalf("a member still down was pinned: now=%q fixed=%q", selectedTag(fallback), fallback.Fixed())
 	}
 	if primary.dialCount != dials+1 {
 		t.Fatalf("pinning a down member did not test it once: %d dials", primary.dialCount-dials)
@@ -592,8 +607,8 @@ func TestFallbackDialFailuresUseMihomoThreshold(t *testing.T) {
 		_ = conn.Close()
 	}
 	state := fallback.health[primary.Tag()]
-	if state.checked || state.failures.count != maxDialFailures-1 || fallback.Now() != primary.Tag() {
-		t.Fatalf("ordinary failures changed global state too early: checked=%v failures=%d now=%q", state.checked, state.failures.count, fallback.Now())
+	if state.checked || state.failures.count != maxDialFailures-1 || selectedTag(fallback) != primary.Tag() {
+		t.Fatalf("ordinary failures changed global state too early: checked=%v failures=%d now=%q", state.checked, state.failures.count, selectedTag(fallback))
 	}
 	select {
 	case <-fallback.wake:
@@ -611,12 +626,12 @@ func TestFallbackDialFailuresUseMihomoThreshold(t *testing.T) {
 	default:
 		t.Fatal("Fallback did not request health check after repeated failures")
 	}
-	if fallback.Now() != primary.Tag() {
-		t.Fatalf("failure threshold changed global selection before health check: %q", fallback.Now())
+	if selectedTag(fallback) != primary.Tag() {
+		t.Fatalf("failure threshold changed global selection before health check: %q", selectedTag(fallback))
 	}
 	fallback.checkOutbounds(context.Background(), 0)
-	if fallback.Now() != secondary.Tag() {
-		t.Fatalf("health check did not fail over after repeated failures: %q", fallback.Now())
+	if selectedTag(fallback) != secondary.Tag() {
+		t.Fatalf("health check did not fail over after repeated failures: %q", selectedTag(fallback))
 	}
 }
 
@@ -641,12 +656,12 @@ func TestFallbackAttemptTimeoutLeavesContextForNextOutbound(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 		t.Fatalf("blackholed outbound consumed the caller context: %s", elapsed)
 	}
-	if fallback.Now() != blocked.Tag() {
-		t.Fatalf("user connection failure changed global selection: %q", fallback.Now())
+	if selectedTag(fallback) != blocked.Tag() {
+		t.Fatalf("user connection failure changed global selection: %q", selectedTag(fallback))
 	}
 	fallback.checkOutbounds(context.Background(), 0)
-	if fallback.Now() != secondary.Tag() {
-		t.Fatalf("health check did not move past the black hole: %q", fallback.Now())
+	if selectedTag(fallback) != secondary.Tag() {
+		t.Fatalf("health check did not move past the black hole: %q", selectedTag(fallback))
 	}
 }
 
@@ -678,12 +693,12 @@ func TestFallbackRetriesFailedEarlyHandshakeWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = conn.Close()
-	if fallback.Now() != early.Tag() {
-		t.Fatalf("early handshake failure changed global selection: %q", fallback.Now())
+	if selectedTag(fallback) != early.Tag() {
+		t.Fatalf("early handshake failure changed global selection: %q", selectedTag(fallback))
 	}
 	fallback.checkOutbounds(context.Background(), 0)
-	if fallback.Now() != secondary.Tag() {
-		t.Fatalf("health check did not move past the failed early handshake: %q", fallback.Now())
+	if selectedTag(fallback) != secondary.Tag() {
+		t.Fatalf("health check did not move past the failed early handshake: %q", selectedTag(fallback))
 	}
 }
 
@@ -721,7 +736,7 @@ func TestFallbackAcceptsGroupMembersAndSharesTheirChecks(t *testing.T) {
 	node := newFallbackHealthTestOutbound("node", true)
 	inner := &fallbackHistoryGroupOutbound{
 		fallbackHealthTestOutbound: newFallbackHealthTestOutbound("inner", true),
-		selected:                   node.Tag(),
+		selected:                   node,
 	}
 	outbound, err := NewFallback(
 		context.Background(),
@@ -759,8 +774,8 @@ func TestFallbackAcceptsGroupMembersAndSharesTheirChecks(t *testing.T) {
 	}
 
 	fallback.checkOutbounds(context.Background(), 0)
-	if fallback.Now() != inner.Tag() {
-		t.Fatalf("the group member was not selected: %q", fallback.Now())
+	if selectedTag(fallback) != inner.Tag() {
+		t.Fatalf("the group member was not selected: %q", selectedTag(fallback))
 	}
 	if dials := inner.dialCount + node.dialCount; dials != 1 {
 		t.Fatalf("the same node was probed once per referencing member: %d", dials)
@@ -797,37 +812,27 @@ func TestFallbackKeepsTheDialContextOfAnOpenConnection(t *testing.T) {
 	}
 }
 
-type fallbackTestConnectionManager struct {
-	adapter.ConnectionManager
-	remote net.Conn
-	err    error
-}
-
-func (m *fallbackTestConnectionManager) NewConnection(ctx context.Context, this N.Dialer, _ net.Conn, metadata adapter.InboundContext, _ N.CloseHandlerFunc) {
-	m.remote, m.err = this.DialContext(ctx, N.NetworkTCP, metadata.Destination)
-}
-
 // A connection the router hands to the group is a user connection, which a
 // switch closes only with interrupt_exist_connections.
 func TestFallbackKeepsRoutedConnectionsAcrossASwitch(t *testing.T) {
 	node := &fallbackContextBoundOutbound{Adapter: outboundAdapter.NewAdapter("test", "node", []string{"tcp", "udp"}, nil)}
 	fallback := newTestFallback(fallbackCandidate{tag: node.Tag(), outbound: node})
-	manager := &fallbackTestConnectionManager{}
-	fallback.connection = manager
 	inbound, peer := net.Pipe()
 	defer peer.Close()
-	var routed adapter.Outbound = fallback
-	if handler, isHandler := routed.(adapter.ConnectionHandler); isHandler {
-		handler.NewConnection(context.Background(), inbound, adapter.InboundContext{}, nil)
-	} else {
-		manager.NewConnection(context.Background(), routed, inbound, adapter.InboundContext{}, nil)
-	}
-	if manager.err != nil {
-		t.Fatal(manager.err)
+	// what the router does with a connection it routes to the group
+	ctx := interrupt.ContextWithIsExternalConnection(context.Background(), true)
+	detach := fallback.AttachConnection(inbound)
+	defer detach()
+	remote, err := fallback.DialContext(ctx, N.NetworkTCP, M.Socksaddr{})
+	if err != nil {
+		t.Fatal(err)
 	}
 	fallback.interruptGroup.Interrupt(false)
-	echoesThrough(t, manager.remote)
-	_ = manager.remote.Close()
+	echoesThrough(t, remote)
+	_ = remote.Close()
+	if err = inbound.SetDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("the switch closed the routed connection: %v", err)
+	}
 }
 
 // The coordinator keeps the result of the previous tick, a little younger than

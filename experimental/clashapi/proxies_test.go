@@ -324,7 +324,7 @@ func TestProxyDelayAcceptsATimeoutOverSixteenBits(t *testing.T) {
 }
 
 func clashTestContext(ctx context.Context) context.Context {
-	ctx = service.ContextWithPtr(ctx, trafficcontrol.NewManager(service.FromContext[adapter.OutboundManager](ctx)))
+	ctx = service.ContextWithPtr(ctx, trafficcontrol.NewManager())
 	ctx = service.ContextWithPtr(ctx, urltest.NewHistoryStorage())
 	return service.ContextWithPtr(ctx, clashmode.NewManager(ctx, log.NewNOPFactory().NewLogger("test"), "Rule", nil))
 }

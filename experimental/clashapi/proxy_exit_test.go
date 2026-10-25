@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -63,13 +64,13 @@ func (o *exitTraceOutbound) ListenPacket(context.Context, M.Socksaddr) (net.Pack
 
 type exitTraceGroup struct {
 	*exitTraceOutbound
-	tag    string
-	member string
+	tag string
 }
 
-func (g *exitTraceGroup) Tag() string   { return g.tag }
-func (g *exitTraceGroup) Now() string   { return g.member }
-func (g *exitTraceGroup) All() []string { return []string{g.member} }
+func (g *exitTraceGroup) Tag() string                       { return g.tag }
+func (g *exitTraceGroup) All() []string                     { return []string{g.exitTraceOutbound.Tag()} }
+func (g *exitTraceGroup) Selected(string) adapter.Outbound  { return g.exitTraceOutbound }
+func (g *exitTraceGroup) AttachConnection(io.Closer) func() { return func() {} }
 
 type exitTraceBench struct {
 	t           *testing.T
@@ -180,7 +181,7 @@ func TestProxyExitReportsEachFamilyOfTheSelectedNode(t *testing.T) {
 	node := newExitTraceOutbound("proxy/Node A")
 	node.servers[exitTraceServersIPv4[0]] = bench.traceServer(exitTraceServersIPv4[0], "203.0.113.7", "NL")
 	node.servers[exitTraceServersIPv6[0]] = bench.traceServer(exitTraceServersIPv6[0], "2001:db8::7", "NL")
-	section := &exitTraceGroup{exitTraceOutbound: node, tag: "proxy-out", member: "proxy/Node A"}
+	section := &exitTraceGroup{exitTraceOutbound: node, tag: "proxy-out"}
 
 	response, report := requestExit(t, bench.server(section, node), "/proxies/proxy-out/exit?timeout=5000")
 	if response.Code != http.StatusOK {

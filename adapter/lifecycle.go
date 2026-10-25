@@ -8,6 +8,7 @@ import (
 	"github.com/sagernet/sing-box/common/taskmonitor"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/common/x/list"
@@ -153,11 +154,13 @@ func (s *Scope) Close() error {
 	s.cleanups.Init()
 	s.children = nil
 	s.access.Unlock()
-	var err error
+	var cleanupErrors []error
 	for _, cleanup := range cleanups {
-		err = E.Errors(err, cleanup())
+		cleanupErrors = append(cleanupErrors, E.Expand(cleanup())...)
 	}
-	return err
+	return E.Errors(common.Filter(cleanupErrors, func(it error) bool {
+		return !E.IsClosed(it) && !E.IsCanceled(it)
+	})...)
 }
 
 func LogElapsed(logger log.ContextLogger, description ...any) func() {

@@ -248,8 +248,8 @@ func TestProviderGroupsFailClosedAndRecover(t *testing.T) {
 	if err := selector.onProviderUpdated(provider.Tag()); err != nil {
 		t.Fatal(err)
 	}
-	if len(selector.All()) != 0 || selector.Now() != "" {
-		t.Fatalf("empty selector unexpectedly selected %q from %v", selector.Now(), selector.All())
+	if len(selector.All()) != 0 || selectedTag(selector) != "" {
+		t.Fatalf("empty selector unexpectedly selected %q from %v", selectedTag(selector), selector.All())
 	}
 	if _, err := selector.DialContext(context.Background(), "tcp", M.Socksaddr{}); err == nil {
 		t.Fatal("empty selector dial succeeded")
@@ -287,8 +287,8 @@ func TestProviderGroupsFailClosedAndRecover(t *testing.T) {
 	if err := selector.onProviderUpdated(provider.Tag()); err != nil {
 		t.Fatal(err)
 	}
-	if selector.Now() != node.Tag() || len(selector.All()) != 1 {
-		t.Fatalf("selector did not recover after provider refresh: now=%q all=%v", selector.Now(), selector.All())
+	if selectedTag(selector) != node.Tag() || len(selector.All()) != 1 {
+		t.Fatalf("selector did not recover after provider refresh: now=%q all=%v", selectedTag(selector), selector.All())
 	}
 	if err := urlTest.onProviderUpdated(provider.Tag()); err != nil {
 		t.Fatal(err)

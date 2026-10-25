@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -26,12 +27,13 @@ import (
 // Selector answers the delay endpoint through the sweep in the handler.
 type groupDelayTestGroup struct {
 	*linkAPIOutbound
-	all []string
-	now string
+	all      []string
+	selected adapter.Outbound
 }
 
-func (g *groupDelayTestGroup) Now() string   { return g.now }
-func (g *groupDelayTestGroup) All() []string { return g.all }
+func (g *groupDelayTestGroup) All() []string                     { return g.all }
+func (g *groupDelayTestGroup) Selected(string) adapter.Outbound  { return g.selected }
+func (g *groupDelayTestGroup) AttachConnection(io.Closer) func() { return func() {} }
 
 // A member whose dial does whatever the test needs: answer, refuse at once, or
 // hang until its deadline runs out.
@@ -248,7 +250,7 @@ func TestGroupDelayAnswersEveryMemberSharingOneOutbound(t *testing.T) {
 	nested := &groupDelayTestGroup{
 		linkAPIOutbound: newGroupDelayAdapter(nestedTag),
 		all:             []string{nodeTag},
-		now:             nodeTag,
+		selected:        node,
 	}
 	outboundGroup := &groupDelayTestGroup{
 		linkAPIOutbound: newGroupDelayAdapter(groupTag),
@@ -390,14 +392,15 @@ func TestGroupDelaySweepsTheMemberInUseFirst(t *testing.T) {
 		staleTag    = "proxy/stale"
 		selectedTag = "proxy/selected"
 	)
+	selected := newGroupDelayRefusingOutbound(selectedTag)
 	outboundGroup := &groupDelayTestGroup{
 		linkAPIOutbound: newGroupDelayAdapter(groupTag),
 		all:             []string{staleTag, selectedTag},
-		now:             selectedTag,
+		selected:        selected,
 	}
 	server := newGroupDelayTestServer(t,
 		newGroupDelayRefusingOutbound(staleTag),
-		newGroupDelayRefusingOutbound(selectedTag),
+		selected,
 		outboundGroup,
 	)
 	now := time.Now()

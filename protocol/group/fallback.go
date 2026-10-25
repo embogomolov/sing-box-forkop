@@ -2,6 +2,7 @@ package group
 
 import (
 	"context"
+	"io"
 	"net"
 	"regexp"
 	"slices"
@@ -36,11 +37,9 @@ func RegisterFallback(registry *outbound.Registry) {
 }
 
 var (
-	_ adapter.OutboundGroup           = (*Fallback)(nil)
+	_ adapter.DialingOutboundGroup    = (*Fallback)(nil)
 	_ adapter.URLTestGroup            = (*Fallback)(nil)
 	_ adapter.SelectableOutboundGroup = (*Fallback)(nil)
-	_ adapter.ConnectionHandler       = (*Fallback)(nil)
-	_ adapter.PacketConnectionHandler = (*Fallback)(nil)
 	_ adapter.InterfaceUpdateListener = (*Fallback)(nil)
 )
 
@@ -81,7 +80,6 @@ type Fallback struct {
 	outbound.Adapter
 	ctx                          context.Context
 	outbound                     adapter.OutboundManager
-	connection                   adapter.ConnectionManager
 	provider                     adapter.ProviderManager
 	logger                       logger.ContextLogger
 	history                      *urltest.HistoryStorage
@@ -177,7 +175,6 @@ func NewFallback(ctx context.Context, router adapter.Router, logger log.ContextL
 		Adapter:                      outbound.NewAdapter(C.TypeFallback, tag, []string{N.NetworkTCP, N.NetworkUDP}, dependencies),
 		ctx:                          ctx,
 		outbound:                     service.FromContext[adapter.OutboundManager](ctx),
-		connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 		provider:                     service.FromContext[adapter.ProviderManager](ctx),
 		logger:                       logger,
 		coordinator:                  coordinator,
@@ -273,11 +270,21 @@ func (s *Fallback) Close() error {
 	return nil
 }
 
-func (s *Fallback) Now() string {
-	s.access.RLock()
-	defer s.access.RUnlock()
-	return s.selected
+// Selected is the member a dial of network tries first; the dial goes through the group, which
+// moves on to the next member when that one fails.
+func (s *Fallback) Selected(network string) adapter.Outbound {
+	candidates := s.candidatesForNetwork(network)
+	if len(candidates) == 0 {
+		return nil
+	}
+	return candidates[0].outbound
 }
+
+func (s *Fallback) AttachConnection(closer io.Closer) func() {
+	return s.interruptGroup.Add(closer, true)
+}
+
+func (s *Fallback) DialsMembers() {}
 
 func (s *Fallback) All() []string {
 	s.access.RLock()
@@ -662,18 +669,6 @@ func (s *Fallback) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return nil, lastError
 }
 
-func (s *Fallback) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	ctx = interrupt.ContextWithIsExternalConnection(ctx)
-	conn = s.interruptGroup.NewConn(conn, true)
-	s.connection.NewConnection(ctx, s, conn, metadata, onClose)
-}
-
-func (s *Fallback) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	ctx = interrupt.ContextWithIsExternalConnection(ctx)
-	conn = s.interruptGroup.NewSingPacketConn(conn, true)
-	s.connection.NewPacketConnection(ctx, s, conn, metadata, onClose)
-}
-
 func (s *Fallback) interruptSelection(oldSelected string, newSelected string) {
 	if oldSelected == "" || oldSelected == newSelected {
 		return
@@ -823,7 +818,7 @@ func (s *Fallback) checkCandidates(ctx context.Context, candidates []fallbackCan
 	for index, candidate := range candidates {
 		results[index].candidate = candidate
 		b.Go(candidate.tag, func() (any, error) {
-			results[index].delay, results[index].at, results[index].err = s.coordinator.Check(ctx, s.link, s.expectedStatus, RealTag(s.outbound, candidate.outbound), candidate.outbound, s.timeout, maxAge)
+			results[index].delay, results[index].at, results[index].err = s.coordinator.Check(ctx, s.link, s.expectedStatus, MemberTag(candidate.outbound), candidate.outbound, s.timeout, maxAge)
 			return nil, nil
 		})
 	}
@@ -847,10 +842,10 @@ func (s *Fallback) checkCandidates(ctx context.Context, candidates []fallbackCan
 		s.health[result.candidate.tag] = state
 		if result.err == nil {
 			resultMap[result.candidate.tag] = result.delay
-			s.history.StoreURLTestHistory(RealTag(s.outbound, result.candidate.outbound), &adapter.URLTestHistory{Time: result.at, Delay: result.delay})
+			s.history.StoreURLTestHistory(MemberTag(result.candidate.outbound), &adapter.URLTestHistory{Time: result.at, Delay: result.delay})
 			s.logger.Debug("fallback outbound ", result.candidate.tag, " available: ", result.delay, "ms")
 		} else {
-			s.history.DeleteURLTestHistory(RealTag(s.outbound, result.candidate.outbound))
+			s.history.DeleteURLTestHistory(MemberTag(result.candidate.outbound))
 			s.logger.Debug("fallback outbound ", result.candidate.tag, " unavailable: ", result.err)
 		}
 	}

@@ -157,8 +157,16 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 
 type OutboundGroup interface {
 	Outbound
-	Now() string
 	All() []string
+	Selected(network string) Outbound
+	AttachConnection(closer io.Closer) (detach func())
+}
+
+// DialingOutboundGroup is a group that dials its members itself: the router hands it
+// the connection instead of the member it reports as selected.
+type DialingOutboundGroup interface {
+	OutboundGroup
+	DialsMembers()
 }
 
 type URLTestGroup interface {

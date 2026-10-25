@@ -60,7 +60,7 @@ func getProxyExit(server *Server) func(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		defer context.AfterFunc(r.Context(), cancel)()
 
-		report := exitReport{Outbound: group.RealTag(server.outbound, proxy)}
+		report := exitReport{Outbound: group.MemberTag(proxy)}
 		var errIPv4, errIPv6 error
 		var wg sync.WaitGroup
 		wg.Go(func() { report.IPv4, errIPv4 = lookupExitAddress(ctx, proxy, exitTraceServersIPv4) })

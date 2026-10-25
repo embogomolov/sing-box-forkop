@@ -17,6 +17,7 @@ import (
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/batch"
 	"github.com/sagernet/sing/common/json/badjson"
+	N "github.com/sagernet/sing/common/network"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
@@ -132,7 +133,7 @@ func (s *Server) groupDelayMembers(outboundGroup adapter.OutboundGroup) []groupD
 		if !loaded {
 			continue
 		}
-		realTag := group.RealTag(s.outbound, detour)
+		realTag := group.MemberTag(detour)
 		if index, loaded := indexByRealTag[realTag]; loaded {
 			members[index].tags = append(members[index].tags, tag)
 			continue
@@ -156,7 +157,10 @@ func (s *Server) groupDelayMembers(outboundGroup adapter.OutboundGroup) []groupD
 			testedAt: testedAt,
 		})
 	}
-	selected := outboundGroup.Now()
+	var selected string
+	if member := outboundGroup.Selected(N.NetworkTCP); member != nil {
+		selected = member.Tag()
+	}
 	isSelected := func(member groupDelayMember) bool {
 		return member.realTag == selected || slices.Contains(member.tags, selected)
 	}

@@ -411,7 +411,7 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) (bool, error) {
 	}
 	s.logger.Debug("updating rule-set ", s.tag, " from URL: ", s.url)
 	// a group that switches members closes the connections it did not route; this one stays
-	ctx = interrupt.ContextWithIsExternalConnection(ctx)
+	ctx = interrupt.ContextWithIsExternalConnection(ctx, true)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if isStart {

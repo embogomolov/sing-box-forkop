@@ -250,7 +250,6 @@ func (c *ClientBind) SetMark(mark uint32) error {
 func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 	udpConn, err := c.connect()
 	if err != nil {
-		c.pauseManager.WaitActive()
 		time.Sleep(time.Second)
 		return err
 	}

@@ -72,65 +72,26 @@ func (s *linuxSpoofer) open() error {
 	}
 	s.rawFD = fd
 	s.rawSockAddr = sockaddr
-	err = s.followConnection(s.tcpConn)
+	err = control.Conn(s.tcpConn, func(raw uintptr) error {
+		s.readHopLimit(int(raw))
+		return inheritRouting(fd, int(raw), s.src)
+	})
 	if err != nil {
 		return err
 	}
 	return s.loadSequenceNumbers(s.tcpConn)
 }
 
-// followConnection makes the raw socket send the way the connection does: with its mark,
-// through its device, from its address. Routing takes all three from the socket, not
-// from the packet, so a raw socket without them is routed by the destination alone, past
-// the rules the connection was dialed under (routing_mark, bind_interface,
-// auto_detect_interface, a rule by source address), and the forged ClientHello may leave
-// through another interface than the connection it belongs to.
-func (s *linuxSpoofer) followConnection(tcpConn *net.TCPConn) error {
-	return control.Conn(tcpConn, func(raw uintptr) error {
-		fd := int(raw)
-		mark, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_MARK)
-		if err == nil && mark != 0 {
-			err = unix.SetsockoptInt(s.rawFD, unix.SOL_SOCKET, unix.SO_MARK, mark)
-			if err != nil {
-				return E.Cause(err, "set the mark of the connection")
-			}
-		}
-		device, err := unix.GetsockoptString(fd, unix.SOL_SOCKET, unix.SO_BINDTODEVICE)
-		if err == nil && device != "" {
-			err = unix.BindToDevice(s.rawFD, device)
-			if err != nil {
-				return E.Cause(err, "bind to the device of the connection")
-			}
-		}
-		var local unix.Sockaddr
-		if s.src.Addr().Is4() {
-			local = &unix.SockaddrInet4{Addr: s.src.Addr().As4()}
-		} else {
-			local6 := &unix.SockaddrInet6{Addr: s.src.Addr().As16()}
-			if zone := s.src.Addr().Zone(); zone != "" {
-				zoneInterface, err := net.InterfaceByName(zone)
-				if err != nil {
-					return E.Cause(err, "find the interface of the local address")
-				}
-				local6.ZoneId = uint32(zoneInterface.Index)
-			}
-			local = local6
-		}
-		err = unix.Bind(s.rawFD, local)
-		if err != nil {
-			return E.Cause(err, "bind to the local address of the connection")
-		}
-		// The forged segment is written with its IP header, which the kernel leaves as
-		// it is, a time to live of 64 in it. Where the system's is another
-		// (net.ipv4.ip_default_ttl, set so on routers behind a modem of a mobile
-		// operator) it would be the one packet of the connection that differs.
-		if s.src.Addr().Is4() {
-			s.hopLimit, _ = unix.GetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_TTL)
-		} else {
-			s.hopLimit, _ = unix.GetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_UNICAST_HOPS)
-		}
-		return nil
-	})
+// The forged segment is written with its IP header, which the kernel leaves as it is, a
+// time to live of 64 in it. Where the system's is another (net.ipv4.ip_default_ttl, set
+// so on routers behind a modem of a mobile operator) it would be the one packet of the
+// connection that differs.
+func (s *linuxSpoofer) readHopLimit(tcpSocket int) {
+	if s.src.Addr().Is4() {
+		s.hopLimit, _ = unix.GetsockoptInt(tcpSocket, unix.IPPROTO_IP, unix.IP_TTL)
+	} else {
+		s.hopLimit, _ = unix.GetsockoptInt(tcpSocket, unix.IPPROTO_IPV6, unix.IPV6_UNICAST_HOPS)
+	}
 }
 
 // likeConnection gives the IP header of a forged frame the time to live (hop limit) the
@@ -168,6 +129,40 @@ func openLinuxRawSocket(dst netip.AddrPort) (int, unix.Sockaddr, error) {
 	// user-supplied IPv6 header under IPV6_HDRINCL.
 	sockaddr := &unix.SockaddrInet6{Addr: dst.Addr().As16()}
 	return fd, sockaddr, nil
+}
+
+// Linux routes IP_HDRINCL packets by the raw socket's bound device, mark and
+// bound address (raw_sendmsg), not by the addresses in the supplied header.
+func inheritRouting(rawSocket, tcpSocket int, src netip.AddrPort) error {
+	bindInterface, err := unix.GetsockoptString(tcpSocket, unix.SOL_SOCKET, unix.SO_BINDTODEVICE)
+	if err != nil {
+		return E.Cause(err, "read SO_BINDTODEVICE")
+	}
+	if bindInterface != "" {
+		err = unix.BindToDevice(rawSocket, bindInterface)
+		if err != nil {
+			return E.Cause(err, "bind raw socket to interface ", bindInterface)
+		}
+	}
+	routingMark, err := unix.GetsockoptInt(tcpSocket, unix.SOL_SOCKET, unix.SO_MARK)
+	if err != nil {
+		return E.Cause(err, "read SO_MARK")
+	}
+	if routingMark != 0 {
+		err = unix.SetsockoptInt(rawSocket, unix.SOL_SOCKET, unix.SO_MARK, routingMark)
+		if err != nil {
+			return E.Cause(err, "set raw socket SO_MARK")
+		}
+	}
+	if src.Addr().Is4() {
+		err = unix.Bind(rawSocket, &unix.SockaddrInet4{Addr: src.Addr().As4()})
+	} else {
+		err = unix.Bind(rawSocket, &unix.SockaddrInet6{Addr: src.Addr().As16()})
+	}
+	if err != nil {
+		return E.Cause(err, "bind raw socket to ", src.Addr())
+	}
+	return nil
 }
 
 // loadSequenceNumbers puts the socket briefly into TCP_REPAIR mode to read

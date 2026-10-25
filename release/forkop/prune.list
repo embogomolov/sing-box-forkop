@@ -31,7 +31,9 @@ Makefile
 .github/deb2ipk.sh
 .github/detect_track.sh
 .github/go_ios_cpu_features.patch
+.github/go_windows_arm64_cpu_features.patch
 .github/patch_go_for_ios.sh
+.github/patch_go_for_windows_arm64.sh
 .github/renovate.json
 .github/setup_go_for_macos1013.sh
 .github/setup_go_for_windows7.sh
@@ -224,6 +226,7 @@ protocol/tailscale/tailssh/server_helper_windows.go
 protocol/tailscale/tailssh/session_android.go
 protocol/tailscale/tailssh/session_ios.go
 protocol/tailscale/tailssh/session_windows.go
+protocol/tailscale/tailssh/switch_user_other.go
 protocol/tailscale/tailssh/user_android.go
 protocol/tailscale/tailssh/user_windows.go
 protocol/tailscale/tun_device_windows.go

@@ -164,7 +164,7 @@ func (s *ProviderRemote) References() []string {
 // provider.
 func (s *ProviderRemote) Update() error {
 	// a group that switches members closes the connections it did not route; this one stays
-	err := s.fetch(interrupt.ContextWithIsExternalConnection(s.ctx))
+	err := s.fetch(interrupt.ContextWithIsExternalConnection(s.ctx, true))
 	if err != nil {
 		s.logger.Error("update outbound provider: ", err)
 	}
