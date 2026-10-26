@@ -262,3 +262,84 @@ func TestHTTP3DialOutlivesTheRequestThatStartedIt(t *testing.T) {
 		t.Fatal("the second request never ended")
 	}
 }
+
+// closeWatchedConn reports its close.
+type closeWatchedConn struct {
+	net.Conn
+	once   sync.Once
+	closed chan struct{}
+}
+
+func (c *closeWatchedConn) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+// closeWatchingDialer dials as the system does and keeps what it dialed.
+type closeWatchingDialer struct {
+	access sync.Mutex
+	conns  []*closeWatchedConn
+}
+
+func (d *closeWatchingDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	conn, err := N.SystemDialer.DialContext(ctx, network, destination)
+	if err != nil {
+		return nil, err
+	}
+	watched := &closeWatchedConn{Conn: conn, closed: make(chan struct{})}
+	d.access.Lock()
+	d.conns = append(d.conns, watched)
+	d.access.Unlock()
+	return watched, nil
+}
+
+func (d *closeWatchingDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return N.SystemDialer.ListenPacket(ctx, destination)
+}
+
+// quic-go does not own the socket a QUIC connection is dialed over and only stops reading it when the
+// connection ends: each connection the pool retired left its socket open.
+func TestHTTP3SocketClosesWithItsConnection(t *testing.T) {
+	logger := log.NewNOPFactory().NewLogger("test")
+	key, certificate, err := tls.GenerateCertificate(nil, nil, time.Now, "xhttp.example", time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	serverTLS, err := tls.NewServer(context.Background(), logger, option.InboundTLSOptions{
+		Enabled: true, ServerName: "xhttp.example", ALPN: []string{"h3"},
+		Certificate: strings.Split(string(certificate), "\n"), Key: strings.Split(string(key), "\n"),
+	})
+	require.NoError(t, err)
+	server, err := NewServer(context.Background(), logger, xhttpOptions(t, `{"type":"xhttp","path":"/x"}`), serverTLS, echoHandler{})
+	require.NoError(t, err)
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go server.ServePacket(packetConn)
+	defer server.Close()
+
+	clientTLS, err := tls.NewClient(context.Background(), logger, "xhttp.example", option.OutboundTLSOptions{
+		Enabled: true, ServerName: "xhttp.example", Insecure: true, ALPN: []string{"h3"},
+	})
+	require.NoError(t, err)
+	dialer := &closeWatchingDialer{}
+	transport, err := NewClient(context.Background(), dialer, M.SocksaddrFromNet(packetConn.LocalAddr()),
+		xhttpOptions(t, `{"type":"xhttp","path":"/x","mode":"stream-one"}`), clientTLS)
+	require.NoError(t, err)
+	conn, err := transport.DialContext(context.Background())
+	require.NoError(t, err)
+	_, err = conn.Write([]byte("hi"))
+	require.NoError(t, err)
+	_, err = io.ReadFull(conn, make([]byte, 2))
+	require.NoError(t, err)
+	conn.Close()
+	transport.Close()
+	dialer.access.Lock()
+	dialed := slices.Clone(dialer.conns)
+	dialer.access.Unlock()
+	require.NotEmpty(t, dialed)
+	for i, socket := range dialed {
+		select {
+		case <-socket.closed:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("socket %d of %d outlived its QUIC connection", i+1, len(dialed))
+		}
+	}
+}

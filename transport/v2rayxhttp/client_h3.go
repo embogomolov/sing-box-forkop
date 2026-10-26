@@ -70,6 +70,10 @@ func newHTTP3Transport(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, o
 					_ = udpConn.Close()
 					return nil, dErr
 				}
+				// quic-go does not own the socket: when the connection ends it only stops reading it
+				context.AfterFunc(conn.Context(), func() {
+					udpConn.Close()
+				})
 				if congestionControlFactory != nil {
 					conn.SetCongestionControl(congestionControlFactory(conn))
 				}
