@@ -85,6 +85,7 @@ func (c Range[T]) Rand() T {
 	if c.From == c.To {
 		return c.From
 	}
-	bigInt, _ := rand.Int(rand.Reader, big.NewInt(int64(c.To-c.From)))
-	return c.From + T(bigInt.Int64())
+	// in uint64: the width of a range may be more than T can hold
+	bigInt, _ := rand.Int(rand.Reader, new(big.Int).SetUint64(uint64(c.To)-uint64(c.From)))
+	return c.From + T(bigInt.Uint64())
 }
