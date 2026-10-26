@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/common/xray/buf"
@@ -64,4 +65,30 @@ func TestFailedRequestKeepsItsNeighbours(t *testing.T) {
 	_, err = io.ReadFull(download, received)
 	require.NoError(t, err)
 	require.Equal(t, "b", string(received))
+}
+
+// A post its session gives up, as a close does with the posts the server has not answered, is no failure of
+// the connection: the client stays in service for the other sessions.
+func TestCancelledPostKeepsTheClient(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+
+	destination := M.ParseSocksaddr(server.Listener.Addr().String())
+	tlsConfig, err := tls.NewClient(context.Background(), log.NewNOPFactory().NewLogger("test"), destination.AddrString(), option.OutboundTLSOptions{
+		Enabled:  true,
+		Insecure: true,
+		ALPN:     []string{"h2"},
+	})
+	require.NoError(t, err)
+	client := createHTTPClient(context.Background(), destination, N.SystemDialer, &option.V2RayXHTTPBaseOptions{}, tlsConfig).(*DefaultDialerClient)
+	defer client.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+	err = client.PostPacket(ctx, server.URL+"/session", "session", "0", buf.MergeBytes(nil, []byte("upload")))
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, client.IsClosed())
 }

@@ -170,9 +170,16 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		xmuxClient2.AddOpenUsage(1)
 	}
 	var closed atomic.Int32
+	uploadSent := make(chan struct{})
+	var sentOnce sync.Once
+	markSent := func() {
+		sentOnce.Do(func() { close(uploadSent) })
+	}
 	reader, writer := io.Pipe()
+	body := &uploadBody{PipeReader: reader, ended: markSent}
 	conn := splitConn{
-		writer: writer,
+		writer:     writer,
+		uploadSent: uploadSent,
 		onClose: func() {
 			if closed.Add(1) > 1 {
 				return
@@ -191,7 +198,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		if xmuxClient != nil {
 			xmuxClient.LeftRequests.Add(-1)
 		}
-		conn.reader, conn.remoteAddr, conn.localAddr, err = httpClient.OpenStream(ctx, requestURL.String(), sessionId, reader, false)
+		conn.reader, conn.remoteAddr, conn.localAddr, err = httpClient.OpenStream(ctx, requestURL.String(), sessionId, body, false)
 		if err != nil { // browser dialer only
 			return nil, err
 		}
@@ -209,7 +216,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		if xmuxClient != nil {
 			xmuxClient.LeftRequests.Add(-1)
 		}
-		_, _, _, err = httpClient.OpenStream(ctx, requestURL.String(), sessionId, reader, true)
+		_, _, _, err = httpClient.OpenStream(ctx, requestURL.String(), sessionId, body, true)
 		if err != nil { // browser dialer only
 			return nil, err
 		}
@@ -232,7 +239,15 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		maxUploadSize,
 	}
 	unanswered := make(chan struct{}, min(maxUnansweredPosts, max(1, maxUnansweredPostBytes/int(maxUploadSize))))
+	// the posts of the session, which a close lets finish before it takes the session down
+	uploadCtx, cancelUploads := context.WithCancel(context.WithoutCancel(ctx))
+	conn.cancelUploads = cancelUploads
+	var posts sync.WaitGroup
 	go func() {
+		defer func() {
+			posts.Wait()
+			markSent()
+		}()
 		var seq int64
 		var lastWrite time.Time
 		dynamicHTTPClient := httpClient
@@ -253,7 +268,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 					break
 				}
 				wroteRequest := done.New()
-				ctx := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+				ctx := httptrace.WithClientTrace(uploadCtx, &httptrace.ClientTrace{
 					WroteRequest: func(httptrace.WroteRequestInfo) {
 						wroteRequest.Close()
 					},
@@ -269,7 +284,9 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 					dynamicHTTPClient, dynamicXmuxClient = c.getHTTPClient()
 				}
 				unanswered <- struct{}{}
+				posts.Add(1)
 				go func(hClient DialerClient) {
+					defer posts.Done()
 					err := hClient.PostPacket(
 						ctx,
 						requestURL.String(),
