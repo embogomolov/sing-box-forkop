@@ -39,6 +39,13 @@ var _ adapter.V2RayMultiplexClientTransport = (*Client)(nil)
 // Xray's megabyte is far over the 8 KiB of headers a server takes, 4 KiB fits beside the padding.
 const headerUploadSize = 4096
 
+// A post holds its data until the server answers it, and a server whose destination stopped reading stops
+// answering: an upload waits for answers past this many posts or bytes, as a TCP connection would.
+const (
+	maxUnansweredPosts     = 32
+	maxUnansweredPostBytes = 4 << 20
+)
+
 type Client struct {
 	ctx             context.Context
 	options         *option.V2RayXHTTPOptions
@@ -224,6 +231,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		uploadPipeWriter,
 		maxUploadSize,
 	}
+	unanswered := make(chan struct{}, min(maxUnansweredPosts, max(1, maxUnansweredPostBytes/int(maxUploadSize))))
 	go func() {
 		var seq int64
 		var lastWrite time.Time
@@ -260,6 +268,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 					(dynamicXmuxClient.UnreusableAt != time.Time{} && lastWrite.After(dynamicXmuxClient.UnreusableAt))) {
 					dynamicHTTPClient, dynamicXmuxClient = c.getHTTPClient()
 				}
+				unanswered <- struct{}{}
 				go func(hClient DialerClient) {
 					err := hClient.PostPacket(
 						ctx,
@@ -268,6 +277,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 						seqStr,
 						chunk,
 					)
+					<-unanswered
 					wroteRequest.Close()
 					if err != nil {
 						uploadPipeReader.Interrupt()

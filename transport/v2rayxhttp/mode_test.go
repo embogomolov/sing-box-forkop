@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -158,4 +159,52 @@ func TestHeaderUploadsArePostedSmall(t *testing.T) {
 		conn.Close()
 		client.Close()
 	}
+}
+
+// silentServer takes the posts of an upload and never answers them, as a server does whose destination
+// stopped reading.
+type silentServer struct {
+	requestRecorder
+	waiting atomic.Int32
+}
+
+func (s *silentServer) PostPacket(ctx context.Context, url string, sessionId string, seqStr string, payload buf.MultiBuffer) error {
+	s.waiting.Add(1)
+	<-ctx.Done()
+	buf.ReleaseMulti(payload)
+	return ctx.Err()
+}
+
+// Posts nobody answers hold their data: an upload stops at 4 MiB of them, where it went on taking the
+// writes of the session until the router ran out of memory.
+func TestUnansweredPostsAreBounded(t *testing.T) {
+	options := option.V2RayXHTTPOptions{Mode: "packet-up", V2RayXHTTPBaseOptions: option.V2RayXHTTPBaseOptions{
+		ScMinPostsIntervalMs: &option.Range[int]{From: 1, To: 1},
+	}}
+	transport, err := NewClient(context.Background(), N.SystemDialer, M.ParseSocksaddr("127.0.0.1:443"), options, nil)
+	require.NoError(t, err)
+	server := &silentServer{}
+	client := transport.(*Client)
+	client.getHTTPClient = func() (DialerClient, *XmuxClient) { return server, nil }
+	client.getHTTPClient2 = client.getHTTPClient
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conn, err := client.DialContext(ctx)
+	require.NoError(t, err)
+	var written atomic.Int64
+	go func() {
+		block := make([]byte, 64*1024)
+		for {
+			n, err := conn.Write(block)
+			written.Add(int64(n))
+			if err != nil {
+				return
+			}
+		}
+	}()
+	time.Sleep(500 * time.Millisecond)
+	require.EqualValues(t, 4, server.waiting.Load())
+	require.Less(t, written.Load(), int64(8<<20))
+	conn.Close()
+	client.Close()
 }
