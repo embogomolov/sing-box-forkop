@@ -421,6 +421,46 @@ func TestRuleSetUpdaterConcurrent(t *testing.T) {
 	require.Less(t, time.Since(started), 1500*time.Millisecond, "the sets were downloaded one by one")
 }
 
+func TestRuleSetUpdaterBigOneAtATime(t *testing.T) {
+	var bigInFlight, bigMost, smallInFlight, smallMost atomic.Int32
+	raise := func(most *atomic.Int32, now int32) {
+		for {
+			seen := most.Load()
+			if now <= seen || most.CompareAndSwap(seen, now) {
+				return
+			}
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inFlight, most := &smallInFlight, &smallMost
+		if r.URL.Path == "/big" {
+			inFlight, most = &bigInFlight, &bigMost
+		}
+		raise(most, inFlight.Add(1))
+		defer inFlight.Add(-1)
+		time.Sleep(200 * time.Millisecond)
+		io.WriteString(w, testSourceSet)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var sets []adapter.RuleSet
+	for _, path := range []string{"/big", "/small", "/big", "/small", "/small"} {
+		set := newFetchTestRuleSet(server.URL + path)
+		set.ctx = ctx
+		set.updateInterval = time.Hour
+		if path == "/big" {
+			set.contentSize.Store(heavyRuleSetSize)
+		}
+		sets = append(sets, set)
+	}
+	updater := NewRuleSetUpdater(ctx, sets)
+	require.Equal(t, []bool{true, true, true, true, true}, updater.updateAll([]int{0, 1, 2, 3, 4}))
+	require.EqualValues(t, 1, bigMost.Load(), "two big lists were downloaded at once")
+	require.EqualValues(t, 3, smallMost.Load())
+	require.Less(t, sets[0].(*RemoteRuleSet).contentSize.Load(), int64(heavyRuleSetSize), "a load keeps the size of what it loaded")
+}
+
 // What a server sends reaches the log as one printable line of a bounded length.
 func TestRuleSetLogText(t *testing.T) {
 	t.Parallel()

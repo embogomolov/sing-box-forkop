@@ -69,6 +69,8 @@ type RemoteRuleSet struct {
 	failureAccess sync.Mutex
 	failures      int
 	failureLogged time.Time
+	// the size of the list it holds: big lists are updated one at a time (heavyRuleSetSize)
+	contentSize atomic.Int64
 }
 
 func NewRemoteRuleSet(ctx context.Context, logger logger.ContextLogger, tag string, options option.RuleSet) (*RemoteRuleSet, error) {
@@ -244,6 +246,7 @@ func (s *RemoteRuleSet) loadBytes(content []byte, lastUpdated time.Time, lastEta
 	s.revision++
 	callbacks := s.callbacks.Array()
 	s.access.Unlock()
+	s.contentSize.Store(int64(len(content)))
 	for _, callback := range callbacks {
 		callback(s)
 	}

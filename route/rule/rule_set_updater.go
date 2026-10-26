@@ -92,19 +92,40 @@ func (u *RuleSetUpdater) loopUpdate() {
 	}
 }
 
+// heavyRuleSetSize is the size of a list from which its update waits for that of any other such
+// list: each holds its download, the list it builds beside the one in use and its save (podkop-engine).
+const heavyRuleSetSize = 1 << 20
+
 // updateAll reports by index which of the rule-sets loaded a new list.
 func (u *RuleSetUpdater) updateAll(indexes []int) []bool {
 	loaded := make([]bool, len(u.ruleSets))
 	slots := make(chan struct{}, ruleSetUpdateConcurrency)
+	heavy := make(chan struct{}, 1)
 	var group sync.WaitGroup
-	for _, i := range indexes {
+	update := func(i int, isHeavy bool) {
 		group.Add(1)
 		slots <- struct{}{}
-		go func(i int) {
+		go func() {
 			defer group.Done()
 			defer func() { <-slots }()
+			if isHeavy {
+				heavy <- struct{}{}
+				defer func() { <-heavy }()
+			}
 			loaded[i] = u.ruleSets[i].updateOnce()
-		}(i)
+		}()
+	}
+	// the small ones first: the big ones hold their slots while they wait for each other
+	var big []int
+	for _, i := range indexes {
+		if u.ruleSets[i].contentSize.Load() >= heavyRuleSetSize {
+			big = append(big, i)
+		} else {
+			update(i, false)
+		}
+	}
+	for _, i := range big {
+		update(i, true)
 	}
 	group.Wait()
 	return loaded
