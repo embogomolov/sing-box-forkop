@@ -15,6 +15,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/congestion"
+	sbdialer "github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/common/xray/buf"
 	"github.com/sagernet/sing-box/common/xray/net"
@@ -95,6 +96,9 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 			if !ok {
 				return nil, E.New("outbound detour not found: ", options2.Detour)
 			}
+		} else if M.IsDomainName(options2.Server) && !serverAddr.IsFqdn() {
+			// the dialer of an outbound whose server is an address resolves no names
+			dialer2 = sbdialer.NewResolveDialer(ctx, dialer, false, "", adapter.DNSQueryOptions{}, 0)
 		}
 		dest2 := options2.ServerOptions.Build()
 		var tlsConfig2 tls.Config

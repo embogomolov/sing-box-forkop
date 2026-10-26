@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/interrupt"
@@ -16,21 +18,64 @@ import (
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
+	"github.com/sagernet/sing/service"
 
 	"github.com/stretchr/testify/require"
 )
 
-// markDialer refuses every dial and notes whether it was asked for an external connection.
+// markDialer refuses every dial and notes where it was asked to and whether for an external connection.
 type markDialer struct {
-	access   sync.Mutex
-	external []bool
+	access       sync.Mutex
+	external     []bool
+	destinations []M.Socksaddr
 }
 
 func (d *markDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	d.access.Lock()
 	d.external = append(d.external, interrupt.IsExternalConnectionFromContext(ctx))
+	d.destinations = append(d.destinations, destination)
 	d.access.Unlock()
 	return nil, E.New("refused")
+}
+
+func (d *markDialer) dialed() []M.Socksaddr {
+	d.access.Lock()
+	defer d.access.Unlock()
+	return append([]M.Socksaddr(nil), d.destinations...)
+}
+
+// lookupRouter answers every lookup with 127.0.0.1 and notes the names it was asked for.
+type lookupRouter struct {
+	adapter.DNSRouter
+	access  sync.Mutex
+	lookups []string
+}
+
+func (r *lookupRouter) Lookup(ctx context.Context, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
+	r.access.Lock()
+	r.lookups = append(r.lookups, domain)
+	r.access.Unlock()
+	return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+}
+
+// The dialer of an outbound whose server is an address resolves no names: a download leg named by a domain
+// is resolved for it, or every download fails with "domain not resolved".
+func TestDownloadServerNameResolves(t *testing.T) {
+	router := &lookupRouter{}
+	ctx := service.ContextWith[adapter.DNSRouter](context.Background(), router)
+	dialer := &markDialer{}
+	download := &option.V2RayXHTTPDownloadOptions{ServerOptions: option.ServerOptions{Server: "down.example", ServerPort: 8080}}
+	client, err := NewClient(ctx, dialer, M.ParseSocksaddr("192.0.2.1:8080"), option.V2RayXHTTPOptions{Download: download}, nil)
+	require.NoError(t, err)
+	defer client.Close()
+	client.DialContext(ctx)
+	require.Eventually(t, func() bool { return len(dialer.dialed()) > 0 }, time.Second, time.Millisecond)
+	for _, destination := range dialer.dialed() {
+		require.True(t, destination.IsIP(), destination)
+	}
+	router.access.Lock()
+	defer router.access.Unlock()
+	require.Contains(t, router.lookups, "down.example")
 }
 
 func (d *markDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
