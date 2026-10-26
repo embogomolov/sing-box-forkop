@@ -60,9 +60,6 @@ type Client struct {
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayXHTTPOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
-	if tlsConfig != nil && len(tlsConfig.NextProtos()) == 0 {
-		tlsConfig.SetNextProtos([]string{"h2"})
-	}
 	if err := checkHTTP3(tlsConfig); err != nil {
 		return nil, err
 	}
@@ -114,9 +111,6 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 			if err != nil {
 				return nil, err
 			}
-		}
-		if tlsConfig2 != nil && len(tlsConfig2.NextProtos()) == 0 {
-			tlsConfig2.SetNextProtos([]string{"h2"})
 		}
 		if err = checkHTTP3(tlsConfig2); err != nil {
 			return nil, E.Cause(err, "download")
@@ -349,6 +343,28 @@ func isReality(tlsConfig tls.Config) bool {
 	}
 }
 
+func hasFingerprint(tlsConfig tls.Config) bool {
+	switch config := tlsConfig.(type) {
+	case *tls.UTLSClientConfig, *tls.RealityClientConfig:
+		return true
+	case *tls.KTLSClientConfig:
+		return hasFingerprint(config.Config)
+	default:
+		return false
+	}
+}
+
+// tcpALPN is what a leg over TCP offers in its Client Hello: what the node sets less h3, which a server
+// listing it first picks over TCP and then cannot serve, as Xray's client never offers it there; with
+// nothing left, a fingerprint's own list, or h2.
+func tcpALPN(tlsConfig tls.Config) []string {
+	alpn := common.Filter(tlsConfig.NextProtos(), func(protocol string) bool { return protocol != "h3" })
+	if len(alpn) == 0 && !hasFingerprint(tlsConfig) {
+		return []string{"h2"}
+	}
+	return alpn
+}
+
 // checkHTTP3 refuses a leg over HTTP/3 the build or its TLS cannot carry: QUIC takes no uTLS fingerprint.
 func checkHTTP3(tlsConfig tls.Config) error {
 	if decideHTTPVersion(tlsConfig) != "3" {
@@ -419,13 +435,18 @@ func getBaseRequestURL(options *option.V2RayXHTTPBaseOptions, dest M.Socksaddr, 
 
 func createHTTPClient(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, options *option.V2RayXHTTPBaseOptions, tlsConfig tls.Config) DialerClient {
 	httpVersion := decideHTTPVersion(tlsConfig)
+	handshakeConfig := tlsConfig
+	if tlsConfig != nil && httpVersion != "3" {
+		handshakeConfig = tlsConfig.Clone()
+		handshakeConfig.SetNextProtos(tcpALPN(tlsConfig))
+	}
 	dialContext := func(ctxInner context.Context) (net.Conn, error) {
 		conn, err := dialer.DialContext(ctxInner, "tcp", dest)
 		if err != nil {
 			return nil, err
 		}
 		if tlsConfig != nil && httpVersion != "3" {
-			return tls.ClientHandshake(ctxInner, conn, tlsConfig)
+			return tls.ClientHandshake(ctxInner, conn, handshakeConfig)
 		}
 		return conn, nil
 	}
