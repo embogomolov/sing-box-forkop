@@ -9,6 +9,8 @@ import (
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 
 	"github.com/stretchr/testify/require"
 )
@@ -39,4 +41,23 @@ func TestChromeParrotLeavesWhatItRefuses(t *testing.T) {
 			t.Errorf("%+v: Chrome profile %v, want %v", test.options, parrot, test.parrot)
 		}
 	}
+}
+
+// QUIC carries no uTLS fingerprint: a leg over HTTP/3 with one is refused when the node is built, as
+// sing-box refuses uTLS for its other QUIC protocols, instead of failing every connection.
+func TestHTTP3RefusesUTLS(t *testing.T) {
+	tlsOptions := option.OutboundTLSOptions{
+		Enabled: true, ServerName: "h3.example", ALPN: []string{"h3"},
+		UTLS: &option.OutboundUTLSOptions{Enabled: true, Fingerprint: "chrome"},
+	}
+	tlsConfig, err := tls.NewClient(context.Background(), log.StdLogger(), "h3.example", tlsOptions)
+	require.NoError(t, err)
+	_, err = NewClient(context.Background(), N.SystemDialer, M.ParseSocksaddr("127.0.0.1:443"), option.V2RayXHTTPOptions{}, tlsConfig)
+	require.ErrorContains(t, err, "uTLS")
+	download := &option.V2RayXHTTPDownloadOptions{
+		ServerOptions:               option.ServerOptions{Server: "127.0.0.1", ServerPort: 443},
+		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: &tlsOptions},
+	}
+	_, err = NewClient(context.Background(), N.SystemDialer, M.ParseSocksaddr("127.0.0.1:443"), option.V2RayXHTTPOptions{Download: download}, nil)
+	require.ErrorContains(t, err, "uTLS")
 }

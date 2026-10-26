@@ -56,8 +56,8 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	if tlsConfig != nil && len(tlsConfig.NextProtos()) == 0 {
 		tlsConfig.SetNextProtos([]string{"h2"})
 	}
-	if !C.WithQUIC && decideHTTPVersion(tlsConfig) == "3" {
-		return nil, C.ErrQUICNotIncluded
+	if err := checkHTTP3(tlsConfig); err != nil {
+		return nil, err
 	}
 	if _, err := congestion.NewCongestionControl(options.CongestionController, options.CWND, nil); err != nil {
 		return nil, err
@@ -111,8 +111,8 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		if tlsConfig2 != nil && len(tlsConfig2.NextProtos()) == 0 {
 			tlsConfig2.SetNextProtos([]string{"h2"})
 		}
-		if !C.WithQUIC && decideHTTPVersion(tlsConfig2) == "3" {
-			return nil, C.ErrQUICNotIncluded
+		if err = checkHTTP3(tlsConfig2); err != nil {
+			return nil, E.Cause(err, "download")
 		}
 		multiplex = multiplex && decideHTTPVersion(tlsConfig2) != "1.1"
 		baseRequestURL2, err = getBaseRequestURL(&options2.V2RayXHTTPBaseOptions, dest2, tlsConfig2)
@@ -320,6 +320,20 @@ func isReality(tlsConfig tls.Config) bool {
 	default:
 		return false
 	}
+}
+
+// checkHTTP3 refuses a leg over HTTP/3 the build or its TLS cannot carry: QUIC takes no uTLS fingerprint.
+func checkHTTP3(tlsConfig tls.Config) error {
+	if decideHTTPVersion(tlsConfig) != "3" {
+		return nil
+	}
+	if !C.WithQUIC {
+		return C.ErrQUICNotIncluded
+	}
+	if _, err := tlsConfig.STDConfig(); err != nil {
+		return E.Cause(err, "XHTTP over HTTP/3")
+	}
+	return nil
 }
 
 func decideHTTPVersion(tlsConfig tls.Config) string {
