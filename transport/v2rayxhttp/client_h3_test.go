@@ -4,12 +4,18 @@ package xhttp
 
 import (
 	"context"
+	gotls "crypto/tls"
 	"io"
 	"net"
+	"net/http"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/sagernet/quic-go"
+	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -131,4 +137,60 @@ func TestHTTP3SessionsPastTheStreamLimit(t *testing.T) {
 	opened := len(lanes.lanes)
 	lanes.access.Unlock()
 	require.Equal(t, 3, opened, "QUIC connections for 250 sessions, %d to one", laneRequests)
+}
+
+// quic-go's client forgets a connection whose request the server reset without closing it, and the
+// keep-alive then holds it open for good: closing the transport closes it as well.
+func TestHTTP3ConnectionAfterAFailedRequestCloses(t *testing.T) {
+	key, certificate, err := tls.GenerateCertificate(nil, nil, time.Now, "xhttp.example", time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	pair, err := gotls.X509KeyPair(certificate, key)
+	require.NoError(t, err)
+	var (
+		access sync.Mutex
+		conns  []*quic.Conn
+	)
+	server := &http3.Server{
+		TLSConfig: http3.ConfigureTLSConfig(&gotls.Config{Certificates: []gotls.Certificate{pair}}),
+		Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			panic(http.ErrAbortHandler)
+		}),
+		ConnContext: func(ctx context.Context, conn *quic.Conn) context.Context {
+			access.Lock()
+			conns = append(conns, conn)
+			access.Unlock()
+			return ctx
+		},
+	}
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go server.Serve(packetConn)
+	defer server.Close()
+
+	clientTLS, err := tls.NewClient(context.Background(), log.StdLogger(), "xhttp.example", option.OutboundTLSOptions{
+		Enabled: true, ServerName: "xhttp.example", Insecure: true, ALPN: []string{"h3"},
+	})
+	require.NoError(t, err)
+	transport, err := NewClient(context.Background(), N.SystemDialer, M.SocksaddrFromNet(packetConn.LocalAddr()),
+		xhttpOptions(t, `{"type":"xhttp","path":"/x","mode":"stream-one"}`), clientTLS)
+	require.NoError(t, err)
+	for range 3 {
+		conn, err := transport.DialContext(context.Background())
+		if err == nil {
+			conn.Read(make([]byte, 1))
+			conn.Close()
+		}
+	}
+	transport.Close()
+	access.Lock()
+	dialed := slices.Clone(conns)
+	access.Unlock()
+	require.NotEmpty(t, dialed)
+	for i, conn := range dialed {
+		select {
+		case <-conn.Context().Done():
+		case <-time.After(3 * time.Second):
+			t.Fatalf("QUIC connection %d of %d outlived the transport", i+1, len(dialed))
+		}
+	}
 }

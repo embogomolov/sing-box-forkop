@@ -51,7 +51,7 @@ func newHTTP3Transport(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, o
 		// the QUIC handshake of Xray-core's client looks like Chrome's
 		ChromeParrot: chromeParrot(tlsConfig),
 	}
-	return &http3Lanes{newTransport: func() *http3.Transport {
+	return &http3Lanes{newTransport: func(track func(*quic.Conn) bool) *http3.Transport {
 		return &http3.Transport{
 			QUICConfig: quicConfig,
 			Dial: func(ctx context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
@@ -68,6 +68,10 @@ func newHTTP3Transport(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, o
 				if congestionControlFactory != nil {
 					conn.SetCongestionControl(congestionControlFactory(conn))
 				}
+				if !track(conn) {
+					conn.CloseWithError(0, "")
+					return nil, http3.ErrTransportClosed
+				}
 				return conn, nil
 			},
 		}
@@ -76,7 +80,7 @@ func newHTTP3Transport(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, o
 
 // http3Lanes carries requests over QUIC connections (lanes), one more whenever every lane is full.
 type http3Lanes struct {
-	newTransport func() *http3.Transport
+	newTransport func(track func(*quic.Conn) bool) *http3.Transport
 
 	access sync.Mutex
 	lanes  []*http3Lane
@@ -85,11 +89,14 @@ type http3Lanes struct {
 
 type http3Lane struct {
 	transport *http3.Transport
-	// requests on their way, and the timer that closes the lane when there are none, both under the lock
-	// of the lanes
+	// the QUIC connections the lane dialed: quic-go's client forgets one whose request failed without
+	// closing it, and the keep-alive then holds it open for good
+	conns map[*quic.Conn]struct{}
+	// requests on their way, and the timer that closes the lane when there are none
 	requests int
 	idle     *time.Timer
-	closed   bool
+	// all of them under the lock of the lanes
+	closed bool
 }
 
 func (l *http3Lanes) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -128,7 +135,8 @@ func (l *http3Lanes) acquire() (*http3Lane, error) {
 	if index >= 0 {
 		lane = l.lanes[index]
 	} else {
-		lane = &http3Lane{transport: l.newTransport()}
+		lane = &http3Lane{}
+		lane.transport = l.newTransport(func(conn *quic.Conn) bool { return l.track(lane, conn) })
 		l.lanes = append(l.lanes, lane)
 	}
 	lane.requests++
@@ -155,9 +163,30 @@ func (l *http3Lanes) release(lane *http3Lane) {
 		}
 		lane.closed = true
 		l.lanes = slices.DeleteFunc(l.lanes, func(other *http3Lane) bool { return other == lane })
+		conns := lane.conns
+		lane.conns = nil
 		l.access.Unlock()
-		lane.transport.Close()
+		lane.close(conns)
 	})
+}
+
+// track keeps a QUIC connection the lane dialed until it ends; none once the lane is closed.
+func (l *http3Lanes) track(lane *http3Lane, conn *quic.Conn) bool {
+	l.access.Lock()
+	defer l.access.Unlock()
+	if lane.closed {
+		return false
+	}
+	if lane.conns == nil {
+		lane.conns = make(map[*quic.Conn]struct{})
+	}
+	lane.conns[conn] = struct{}{}
+	context.AfterFunc(conn.Context(), func() {
+		l.access.Lock()
+		delete(lane.conns, conn)
+		l.access.Unlock()
+	})
+	return true
 }
 
 func (l *http3Lanes) Close() error {
@@ -165,17 +194,28 @@ func (l *http3Lanes) Close() error {
 	lanes := l.lanes
 	l.lanes = nil
 	l.closed = true
-	for _, lane := range lanes {
+	conns := make([]map[*quic.Conn]struct{}, len(lanes))
+	for i, lane := range lanes {
 		lane.closed = true
 		if lane.idle != nil {
 			lane.idle.Stop()
 		}
+		conns[i] = lane.conns
+		lane.conns = nil
 	}
 	l.access.Unlock()
-	for _, lane := range lanes {
-		lane.transport.Close()
+	for i, lane := range lanes {
+		lane.close(conns[i])
 	}
 	return nil
+}
+
+// close closes a lane taken out of service and every connection it dialed.
+func (lane *http3Lane) close(conns map[*quic.Conn]struct{}) {
+	lane.transport.Close()
+	for conn := range conns {
+		conn.CloseWithError(0, "")
+	}
 }
 
 // laneBody ends the count of its request when the response body is closed.
