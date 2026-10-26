@@ -5,7 +5,10 @@ package xhttp
 import (
 	"context"
 	gotls "crypto/tls"
+	"io"
 	"net/http"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/sagernet/quic-go"
@@ -20,6 +23,15 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/ntp"
 )
+
+// laneRequests is how many requests at a time one QUIC connection is given. A server allows a connection so
+// many open streams, 100 by quic-go's default that Xray's server keeps, and quic-go's client then waits for
+// a free one where HTTP/2's opens another connection: a node's sessions past about 300 hung on its three
+// connections. The margin is for streams the server has not counted closed yet.
+const laneRequests = 90
+
+// laneIdleTimeout closes a QUIC connection opened past the first once it has had no request for this long.
+const laneIdleTimeout = 30 * time.Second
 
 func newHTTP3Transport(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, options *option.V2RayXHTTPBaseOptions, tlsConfig tls.Config, keepAlivePeriod time.Duration) http.RoundTripper {
 	if keepAlivePeriod == 0 {
@@ -39,25 +51,143 @@ func newHTTP3Transport(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, o
 		// the QUIC handshake of Xray-core's client looks like Chrome's
 		ChromeParrot: chromeParrot(tlsConfig),
 	}
-	return &http3.Transport{
-		QUICConfig: quicConfig,
-		Dial: func(ctx context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
-			ctx = adapter.ContextForMultiplexSession(ctx)
-			udpConn, dErr := dialer.DialContext(ctx, N.NetworkUDP, dest)
-			if dErr != nil {
-				return nil, dErr
-			}
-			conn, dErr := qtls.DialEarly(ctx, udpConn, tlsConfig, cfg)
-			if dErr != nil {
-				_ = udpConn.Close()
-				return nil, dErr
-			}
-			if congestionControlFactory != nil {
-				conn.SetCongestionControl(congestionControlFactory(conn))
-			}
-			return conn, nil
-		},
+	return &http3Lanes{newTransport: func() *http3.Transport {
+		return &http3.Transport{
+			QUICConfig: quicConfig,
+			Dial: func(ctx context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
+				ctx = adapter.ContextForMultiplexSession(ctx)
+				udpConn, dErr := dialer.DialContext(ctx, N.NetworkUDP, dest)
+				if dErr != nil {
+					return nil, dErr
+				}
+				conn, dErr := qtls.DialEarly(ctx, udpConn, tlsConfig, cfg)
+				if dErr != nil {
+					_ = udpConn.Close()
+					return nil, dErr
+				}
+				if congestionControlFactory != nil {
+					conn.SetCongestionControl(congestionControlFactory(conn))
+				}
+				return conn, nil
+			},
+		}
+	}}
+}
+
+// http3Lanes carries requests over QUIC connections (lanes), one more whenever every lane is full.
+type http3Lanes struct {
+	newTransport func() *http3.Transport
+
+	access sync.Mutex
+	lanes  []*http3Lane
+	closed bool
+}
+
+type http3Lane struct {
+	transport *http3.Transport
+	// requests on their way, and the timer that closes the lane when there are none, both under the lock
+	// of the lanes
+	requests int
+	idle     *time.Timer
+	closed   bool
+}
+
+func (l *http3Lanes) RoundTrip(request *http.Request) (*http.Response, error) {
+	lane, err := l.acquire()
+	if err != nil {
+		if request.Body != nil {
+			request.Body.Close()
+		}
+		return nil, err
 	}
+	var once sync.Once
+	release := func() { once.Do(func() { l.release(lane) }) }
+	response, err := lane.transport.RoundTrip(request)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	// a request given up by its context frees its stream as well
+	stop := context.AfterFunc(request.Context(), release)
+	response.Body = &laneBody{ReadCloser: response.Body, release: func() {
+		stop()
+		release()
+	}}
+	return response, nil
+}
+
+// acquire counts a request on the first lane with room for it, so that the later ones empty and close.
+func (l *http3Lanes) acquire() (*http3Lane, error) {
+	l.access.Lock()
+	defer l.access.Unlock()
+	if l.closed {
+		return nil, http3.ErrTransportClosed
+	}
+	index := slices.IndexFunc(l.lanes, func(lane *http3Lane) bool { return lane.requests < laneRequests })
+	var lane *http3Lane
+	if index >= 0 {
+		lane = l.lanes[index]
+	} else {
+		lane = &http3Lane{transport: l.newTransport()}
+		l.lanes = append(l.lanes, lane)
+	}
+	lane.requests++
+	if lane.idle != nil {
+		lane.idle.Stop()
+		lane.idle = nil
+	}
+	return lane, nil
+}
+
+// release ends the count of a request. The first lane stays, for the pool retires the connection whole.
+func (l *http3Lanes) release(lane *http3Lane) {
+	l.access.Lock()
+	defer l.access.Unlock()
+	lane.requests--
+	if lane.requests > 0 || lane.closed || l.lanes[0] == lane {
+		return
+	}
+	lane.idle = time.AfterFunc(laneIdleTimeout, func() {
+		l.access.Lock()
+		if lane.requests > 0 || lane.closed {
+			l.access.Unlock()
+			return
+		}
+		lane.closed = true
+		l.lanes = slices.DeleteFunc(l.lanes, func(other *http3Lane) bool { return other == lane })
+		l.access.Unlock()
+		lane.transport.Close()
+	})
+}
+
+func (l *http3Lanes) Close() error {
+	l.access.Lock()
+	lanes := l.lanes
+	l.lanes = nil
+	l.closed = true
+	for _, lane := range lanes {
+		lane.closed = true
+		if lane.idle != nil {
+			lane.idle.Stop()
+		}
+	}
+	l.access.Unlock()
+	for _, lane := range lanes {
+		lane.transport.Close()
+	}
+	return nil
+}
+
+// laneBody ends the count of its request when the response body is closed.
+type laneBody struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b *laneBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.release()
+	return err
 }
 
 // quic-go's Chrome profile refuses a TLS configuration that verifies the server by itself, as

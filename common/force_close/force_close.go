@@ -1,6 +1,7 @@
 package force_close
 
 import (
+	"io"
 	"net/http"
 	"reflect"
 	"unsafe"
@@ -18,10 +19,11 @@ func ResetTransport(rawTransport http.RoundTripper) http.RoundTripper {
 	case *http2.Transport:
 		CloseHTTP2Connections(transport)
 		return transport
+	case io.Closer:
+		// HTTP/3's transport and XHTTP's over several QUIC connections close their connections themselves
+		transport.Close()
+		return rawTransport
 	default:
-		if reset, ok := resetHTTP3Transport(rawTransport); ok {
-			return reset
-		}
 		panic(E.New("unknown transport type: ", reflect.TypeOf(transport)))
 	}
 }
