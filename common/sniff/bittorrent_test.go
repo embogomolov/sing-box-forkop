@@ -108,3 +108,18 @@ func TestSniffNotUTP(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestSniffWireGuardInitiationIsNotUTP(t *testing.T) {
+	t.Parallel()
+	packet := make([]byte, 148)
+	packet[0] = 1
+	for i := 4; i < len(packet); i++ {
+		packet[i] = byte(i*37 + 11)
+	}
+	var metadata adapter.InboundContext
+	require.Error(t, sniff.UTP(context.TODO(), &metadata, packet))
+	require.Empty(t, metadata.Protocol)
+	// a uTP data packet of another length, with the same header, still is uTP
+	require.NoError(t, sniff.UTP(context.TODO(), &metadata, packet[:120]))
+	require.Equal(t, C.ProtocolBitTorrent, metadata.Protocol)
+}

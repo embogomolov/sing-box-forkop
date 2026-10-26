@@ -64,6 +64,11 @@ func UTP(_ context.Context, metadata *adapter.InboundContext, packet []byte) err
 	if version != 1 || ty > 4 {
 		return os.ErrInvalid
 	}
+	// A WireGuard handshake initiation (148 bytes, type 1 as four little-endian bytes) reads
+	// as a uTP data packet with connection id 0 (podkop-engine).
+	if len(packet) == 148 && packet[1] == 0 && packet[2] == 0 && packet[3] == 0 {
+		return os.ErrInvalid
+	}
 
 	// Validate the extensions
 	extension := packet[1]
