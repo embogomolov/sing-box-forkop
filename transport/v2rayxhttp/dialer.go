@@ -95,10 +95,11 @@ func (c *DefaultDialerClient) OpenStream(ctx context.Context, url string, sessio
 	}
 	FillStreamRequest(req, sessionId, "", c.options)
 	wrc = &WaitReadCloser{wait: done.New(), Cancel: cancel}
+	var failure atomic.Pointer[error]
 	go func() {
-		var resp *http.Response
-		resp, err = c.client.Do(req)
+		resp, err := c.client.Do(req)
 		if err != nil {
+			failure.Store(&err)
 			if !uploadOnly && !errors.Is(err, context.Canceled) { // stream-down is enough
 				c.fail()
 			}
@@ -119,6 +120,10 @@ func (c *DefaultDialerClient) OpenStream(ctx context.Context, url string, sessio
 		wrc.(*WaitReadCloser).Set(resp.Body)
 	}()
 	<-gotConn.Wait()
+	// a request that failed before it had a connection fails the dial; a later failure ends the stream
+	if failed := failure.Load(); failed != nil {
+		err = *failed
+	}
 	return
 }
 
