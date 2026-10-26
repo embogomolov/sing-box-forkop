@@ -17,6 +17,7 @@ import (
 	"github.com/sagernet/sing-box/common/congestion"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/common/xray/net"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	qtls "github.com/sagernet/sing-quic"
 	M "github.com/sagernet/sing/common/metadata"
@@ -55,6 +56,10 @@ func newHTTP3Transport(ctx context.Context, dest M.Socksaddr, dialer N.Dialer, o
 		return &http3.Transport{
 			QUICConfig: quicConfig,
 			Dial: func(ctx context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
+				// the requests that come while the connection is dialed wait for it too: the one that began
+				// the dial must not take it down when it is given up
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), C.TCPTimeout)
+				defer cancel()
 				ctx = adapter.ContextForMultiplexSession(ctx)
 				udpConn, dErr := dialer.DialContext(ctx, N.NetworkUDP, dest)
 				if dErr != nil {

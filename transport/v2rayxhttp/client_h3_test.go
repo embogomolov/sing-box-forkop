@@ -17,6 +17,7 @@ import (
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/common/xray/buf"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
@@ -192,5 +193,72 @@ func TestHTTP3ConnectionAfterAFailedRequestCloses(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatalf("QUIC connection %d of %d outlived the transport", i+1, len(dialed))
 		}
+	}
+}
+
+// slowDialer holds each dial for a while unless its context ends first, and reports that one began.
+type slowDialer struct {
+	began chan struct{}
+}
+
+func (d *slowDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	select {
+	case d.began <- struct{}{}:
+	default:
+	}
+	select {
+	case <-time.After(300 * time.Millisecond):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return N.SystemDialer.DialContext(ctx, network, destination)
+}
+
+func (d *slowDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return N.SystemDialer.ListenPacket(ctx, destination)
+}
+
+// The requests that come while a QUIC connection is dialed wait for it with the one that started the
+// dial: that one given up leaves the connection to them, as HTTP/2's client and Xray's do.
+func TestHTTP3DialOutlivesTheRequestThatStartedIt(t *testing.T) {
+	key, certificate, err := tls.GenerateCertificate(nil, nil, time.Now, "xhttp.example", time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	pair, err := gotls.X509KeyPair(certificate, key)
+	require.NoError(t, err)
+	server := &http3.Server{
+		TLSConfig: http3.ConfigureTLSConfig(&gotls.Config{Certificates: []gotls.Certificate{pair}}),
+		Handler:   http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+	}
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	go server.Serve(packetConn)
+	defer server.Close()
+
+	clientTLS, err := tls.NewClient(context.Background(), log.StdLogger(), "xhttp.example", option.OutboundTLSOptions{
+		Enabled: true, ServerName: "xhttp.example", Insecure: true, ALPN: []string{"h3"},
+	})
+	require.NoError(t, err)
+	dialer := &slowDialer{began: make(chan struct{}, 1)}
+	client := createHTTPClient(context.Background(), M.SocksaddrFromNet(packetConn.LocalAddr()), dialer, &option.V2RayXHTTPBaseOptions{}, clientTLS)
+	defer client.Close()
+	first, giveUp := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- client.PostPacket(first, "https://xhttp.example/x", "session", "0", buf.MergeBytes(nil, []byte("a")))
+	}()
+	<-dialer.began
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- client.PostPacket(context.Background(), "https://xhttp.example/x", "session", "1", buf.MergeBytes(nil, []byte("b")))
+	}()
+	// the second request waits for the dial the first one began
+	time.Sleep(50 * time.Millisecond)
+	giveUp()
+	require.Error(t, <-firstDone)
+	select {
+	case err = <-secondDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second request never ended")
 	}
 }
