@@ -38,6 +38,7 @@ type DefaultDialerClient struct {
 	options     *option.V2RayXHTTPBaseOptions
 	client      *http.Client
 	closed      bool
+	failed      bool
 	httpVersion string
 	// pool of net.Conn, created using dialUploadConn
 	uploadRawPool  *sync.Pool
@@ -56,10 +57,18 @@ func (c *DefaultDialerClient) Close() {
 	c.client.Transport = force_close.ResetTransport(c.client.Transport)
 }
 
+// fail takes the client out of service after a failed request, as Xray's: the sessions on its connections
+// go on, and the pool closes it once the last of them is over.
+func (c *DefaultDialerClient) fail() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+	c.failed = true
+}
+
 func (c *DefaultDialerClient) IsClosed() bool {
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
-	return c.closed
+	return c.closed || c.failed
 }
 
 func (c *DefaultDialerClient) OpenStream(ctx context.Context, url string, sessionId string, body io.Reader, uploadOnly bool) (wrc io.ReadCloser, remoteAddr, localAddr net.Addr, err error) {
@@ -91,7 +100,7 @@ func (c *DefaultDialerClient) OpenStream(ctx context.Context, url string, sessio
 		resp, err = c.client.Do(req)
 		if err != nil {
 			if !uploadOnly && !errors.Is(err, context.Canceled) { // stream-down is enough
-				c.Close()
+				c.fail()
 			}
 			cancel()
 			gotConn.Close()
@@ -123,7 +132,7 @@ func (c *DefaultDialerClient) PostPacket(ctx context.Context, url string, sessio
 	if c.httpVersion != "1.1" {
 		resp, err := c.client.Do(req)
 		if err != nil {
-			c.Close()
+			c.fail()
 			return err
 		}
 		io.Copy(io.Discard, resp.Body)
@@ -159,7 +168,7 @@ func (c *DefaultDialerClient) PostPacket(ctx context.Context, url string, sessio
 				if h1UploadConn.UnreadedResponsesCount > 0 {
 					resp, err := http.ReadResponse(h1UploadConn.RespBufReader, req)
 					if err != nil {
-						c.Close()
+						c.fail()
 						return fmt.Errorf("error while reading response: %s", err.Error())
 					}
 					io.Copy(io.Discard, resp.Body)
