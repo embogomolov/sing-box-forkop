@@ -21,12 +21,15 @@ func GetRandomizer() *rand.Rand {
 
 var globalRng *rand.Rand = GetRandomizer()
 
+// The versions are worked out from the date when the package is initialized, and a router may start with
+// its clock unset: a clock before the release a version counts from is taken for that release's day.
+
 // The Chrome version generator will suffer from deviation of a normal distribution.
-func ChromeVersion() int {
+func ChromeVersion(now time.Time) int {
 	// Start from Chrome 144, released on 2026.1.13.
 	var startVersion int = 144
 	var timeStart int64 = time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC).Unix() / 86400
-	var timeCurrent int64 = time.Now().Unix() / 86400
+	var timeCurrent int64 = max(now.Unix()/86400, timeStart)
 	var timeDiff int = int((timeCurrent - timeStart - 35)) - int(math.Floor(math.Pow(globalRng.Float64(), 2)*105))
 	return startVersion + (timeDiff / 35) // It's 31.15 currently.
 }
@@ -38,25 +41,30 @@ var safariMinorMap [25]int = [25]int{
 }
 
 // The following version generators use deterministic generators, but with the distribution scaled by a curve.
-func CurlVersion() string {
+func CurlVersion(now time.Time) string {
 	// curl 8.0.0 was released on 20/03/2023.
-	var timeCurrent int64 = time.Now().Unix() / 86400
 	var timeStart int64 = time.Date(2023, 3, 20, 0, 0, 0, 0, time.UTC).Unix() / 86400
+	var timeCurrent int64 = max(now.Unix()/86400, timeStart)
 	var timeDiff int = int((timeCurrent - timeStart - 60)) - int(math.Floor(math.Pow(globalRng.Float64(), 2)*165))
-	var minorValue int = int(timeDiff / 57) // The release cadence is actually 56.67 days.
+	var minorValue int = max(timeDiff/57, 0) // The release cadence is actually 56.67 days.
 	return "8." + strconv.Itoa(minorValue) + ".0"
 }
 
-func FirefoxVersion() int {
+func FirefoxVersion(now time.Time) int {
 	// Firefox 128 ESR was released on 09/07/2023.
-	var timeCurrent int64 = time.Now().Unix() / 86400
 	var timeStart int64 = time.Date(2024, 7, 29, 0, 0, 0, 0, time.UTC).Unix() / 86400
+	var timeCurrent int64 = max(now.Unix()/86400, timeStart)
 	timeDiff := timeCurrent - timeStart - 25 - int64(math.Floor(math.Pow(globalRng.Float64(), 2)*50))
 	return int(timeDiff/30) + 128
 }
 
-func SafariVersion() string {
-	var anchoredTime time.Time = time.Now()
+// Safari counts from the year: no clock is taken for earlier than the day Chrome counts from, by when
+// every installation had Safari 26.
+func SafariVersion(now time.Time) string {
+	var anchoredTime time.Time = now
+	if chromeStart := time.Date(2026, 1, 13, 0, 0, 0, 0, time.UTC); anchoredTime.Before(chromeStart) {
+		anchoredTime = chromeStart
+	}
 	var releaseYear int = anchoredTime.Year()
 	var splitPoint time.Time = time.Date(releaseYear, 9, 23, 0, 0, 0, 0, time.UTC)
 	delayedDays := int(math.Floor(math.Pow(globalRng.Float64(), 3) * 75))
@@ -147,15 +155,15 @@ func getGreasedChUa(majorVersion int, forkName string) string {
 
 // The code below provides a coherent default browser user agent string based on a CPU-seeded PRNG.
 var (
-	CurlUA                 = "curl/" + CurlVersion()
-	AnchoredFirefoxVersion = strconv.Itoa(FirefoxVersion())
+	CurlUA                 = "curl/" + CurlVersion(time.Now())
+	AnchoredFirefoxVersion = strconv.Itoa(FirefoxVersion(time.Now()))
 	FirefoxUA              = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:" + AnchoredFirefoxVersion + ".0) Gecko/20100101 Firefox/" + AnchoredFirefoxVersion + ".0"
-	SafariUA               = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/" + SafariVersion() + " Safari/605.1.15"
+	SafariUA               = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/" + SafariVersion(time.Now()) + " Safari/605.1.15"
 )
 
 // Chromium browsers.
 var (
-	AnchoredChromeVersion = ChromeVersion()
+	AnchoredChromeVersion = ChromeVersion(time.Now())
 	ChromeUA              = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + strconv.Itoa(AnchoredChromeVersion) + ".0.0.0 Safari/537.36"
 	ChromeUACH            = getGreasedChUa(AnchoredChromeVersion, "chrome")
 	MSEdgeUA              = ChromeUA + "Edg/" + strconv.Itoa(AnchoredChromeVersion) + ".0.0.0"
