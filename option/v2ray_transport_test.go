@@ -33,3 +33,20 @@ func TestXHTTPPaddingDefaultsAsXray(t *testing.T) {
 		}
 	}
 }
+
+// What can only fail every dial is refused when the configuration is read: a method that is no HTTP token,
+// a download leg without its server or port.
+func TestXHTTPRefusesWhatFailsEveryDial(t *testing.T) {
+	for _, test := range []struct{ content, message string }{
+		{`{"type":"xhttp","mode":"packet-up","uplink_http_method":"PO ST"}`, "uplink_http_method"},
+		{`{"type":"xhttp","mode":"packet-up","download":{"server":"down.example","server_port":443,"uplink_http_method":"P\"UT"}}`, "uplink_http_method"},
+		{`{"type":"xhttp","download":{"server_port":443}}`, "download: missing server"},
+		{`{"type":"xhttp","download":{"server":"down.example"}}`, "download: missing server_port"},
+	} {
+		var transport V2RayTransportOptions
+		require.ErrorContains(t, json.UnmarshalContext(context.Background(), []byte(test.content), &transport), test.message, test.content)
+	}
+	var transport V2RayTransportOptions
+	require.NoError(t, json.UnmarshalContext(context.Background(), []byte(`{"type":"xhttp","mode":"packet-up","uplink_http_method":"put"}`), &transport))
+	require.Equal(t, "PUT", transport.XHTTPOptions.UplinkHTTPMethod)
+}

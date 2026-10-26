@@ -13,6 +13,8 @@ import (
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badjson"
 	"github.com/sagernet/sing/common/json/badoption"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 type _V2RayTransportOptions struct {
@@ -213,6 +215,14 @@ func (c *V2RayXHTTPOptions) UnmarshalJSON(bytes []byte) error {
 	if c.Download != nil && c.Mode == "stream-one" {
 		return E.New(`can not use "download" in "stream-one" mode`)
 	}
+	if c.Download != nil {
+		if c.Download.Server == "" {
+			return E.New("download: missing server")
+		}
+		if c.Download.ServerPort == 0 {
+			return E.New("download: missing server_port")
+		}
+	}
 	err = checkV2RayXHTTPBaseOptions(c.Mode, &c.V2RayXHTTPBaseOptions)
 	if err != nil {
 		return err
@@ -280,6 +290,9 @@ func checkV2RayXHTTPBaseOptions(mode string, options *V2RayXHTTPBaseOptions) err
 		options.UplinkHTTPMethod = "POST"
 	}
 	options.UplinkHTTPMethod = strings.ToUpper(options.UplinkHTTPMethod)
+	if !httpguts.ValidHeaderFieldName(options.UplinkHTTPMethod) {
+		return E.New("uplink_http_method is no HTTP method")
+	}
 
 	if options.UplinkHTTPMethod == "GET" && mode != "packet-up" {
 		return E.New("uplink_http_method can be GET only in packet-up mode")
