@@ -23,8 +23,9 @@ import (
 // requestRecorder names the requests of a stream as Xray's server tells them apart and answers each one
 // with an empty response.
 type requestRecorder struct {
-	access   sync.Mutex
-	requests []string
+	access    sync.Mutex
+	requests  []string
+	postSizes []int32
 }
 
 func (r *requestRecorder) IsClosed() bool { return false }
@@ -47,9 +48,22 @@ func (r *requestRecorder) OpenStream(ctx context.Context, url string, sessionId 
 }
 
 func (r *requestRecorder) PostPacket(ctx context.Context, url string, sessionId string, seqStr string, payload buf.MultiBuffer) error {
+	r.access.Lock()
+	r.postSizes = append(r.postSizes, payload.Len())
+	r.access.Unlock()
 	buf.ReleaseMulti(payload)
 	r.record("packet-up")
 	return nil
+}
+
+func (r *requestRecorder) posted() (largest int32, total int32) {
+	r.access.Lock()
+	defer r.access.Unlock()
+	for _, size := range r.postSizes {
+		largest = max(largest, size)
+		total += size
+	}
+	return
 }
 
 func (r *requestRecorder) record(request string) {
@@ -106,6 +120,41 @@ func TestAutoModeFollowsXray(t *testing.T) {
 		require.Eventually(t, func() bool { return len(recorder.recorded()) >= len(test.requests) }, time.Second, time.Millisecond)
 		require.Equal(t, test.requests, recorder.recorded(), "mode %q, reality %v, kTLS %v, download %v",
 			test.mode, test.reality, test.kernelTLS, test.download != nil)
+		conn.Close()
+		client.Close()
+	}
+}
+
+// Upload data carried in headers or cookies has to fit the 8 KiB of headers a server takes: a post of such
+// a node is 4 KiB unless it sets its own size, where Xray's default megabyte failed every bulk upload.
+func TestHeaderUploadsArePostedSmall(t *testing.T) {
+	interval := &option.Range[int]{From: 1, To: 1}
+	for _, test := range []struct {
+		placement string
+		size      *option.Range[int]
+		largest   int32
+	}{
+		{placement: option.PlacementHeader, largest: 4096},
+		{placement: option.PlacementCookie, largest: 4096},
+		{placement: option.PlacementHeader, size: &option.Range[int]{From: 6000, To: 6000}, largest: 6000},
+		{placement: option.PlacementBody, largest: 64 * 1024},
+	} {
+		options := option.V2RayXHTTPOptions{Mode: "packet-up", V2RayXHTTPBaseOptions: option.V2RayXHTTPBaseOptions{
+			UplinkDataPlacement: test.placement, ScMaxEachPostBytes: test.size, ScMinPostsIntervalMs: interval,
+		}}
+		transport, err := NewClient(context.Background(), N.SystemDialer, M.ParseSocksaddr("127.0.0.1:443"), options, nil)
+		require.NoError(t, err)
+		recorder := &requestRecorder{}
+		client := transport.(*Client)
+		client.getHTTPClient = func() (DialerClient, *XmuxClient) { return recorder, nil }
+		client.getHTTPClient2 = client.getHTTPClient
+		conn, err := client.DialContext(context.Background())
+		require.NoError(t, err)
+		_, err = conn.Write(make([]byte, 64*1024))
+		require.NoError(t, err)
+		require.Eventually(t, func() bool { _, total := recorder.posted(); return total == 64*1024 }, 5*time.Second, time.Millisecond, test.placement)
+		largest, _ := recorder.posted()
+		require.LessOrEqual(t, largest, test.largest, test.placement)
 		conn.Close()
 		client.Close()
 	}

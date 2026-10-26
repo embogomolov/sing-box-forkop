@@ -34,6 +34,10 @@ import (
 
 var _ adapter.V2RayMultiplexClientTransport = (*Client)(nil)
 
+// headerUploadSize is a post of upload data carried in headers or cookies when the node sets no size:
+// Xray's megabyte is far over the 8 KiB of headers a server takes, 4 KiB fits beside the padding.
+const headerUploadSize = 4096
+
 type Client struct {
 	ctx             context.Context
 	options         *option.V2RayXHTTPOptions
@@ -201,6 +205,10 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		return &conn, nil
 	}
 	scMaxEachPostBytes := options.GetNormalizedScMaxEachPostBytes()
+	if (options.ScMaxEachPostBytes == nil || options.ScMaxEachPostBytes.To == 0) &&
+		(options.UplinkDataPlacement == option.PlacementHeader || options.UplinkDataPlacement == option.PlacementCookie) {
+		scMaxEachPostBytes = option.Range[int]{From: headerUploadSize, To: headerUploadSize}
+	}
 	scMinPostsIntervalMs := options.GetNormalizedScMinPostsIntervalMs()
 	maxUploadSize := int32(scMaxEachPostBytes.Rand())
 	// WithSizeLimit(0) will still allow single bytes to pass, and a lot of
