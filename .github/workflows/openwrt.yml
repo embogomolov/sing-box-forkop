@@ -190,4 +190,4 @@ jobs:
           else
             gh release create "$TAG" --draft --verify-tag --generate-notes
           fi
-          gh release upload "$TAG" -- *.ipk *.apk release.json SHA256SUMS --clobber
+          gh release upload "$TAG" --clobber -- *.ipk *.apk release.json SHA256SUMS
