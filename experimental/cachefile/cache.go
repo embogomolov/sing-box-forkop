@@ -32,6 +32,7 @@ var (
 		string(bucketExpand),
 		string(bucketMode),
 		string(bucketRuleSet),
+		string(bucketRuleSetFile),
 		string(bucketRDRC),
 		string(bucketDNSCache),
 	}
@@ -248,6 +249,14 @@ func (c *CacheFile) start() error {
 		return err
 	}
 	c.DB = db
+	c.moveRuleSetsToFiles()
+	// the move may have reset the database (a damaged page found on the way): the one it left
+	db, err = c.compactSparse(c.DB)
+	if err != nil {
+		return err
+	}
+	c.DB = db
+	c.pruneRuleSetFiles(db)
 	return nil
 }
 
@@ -444,6 +453,9 @@ func (c *CacheFile) StoreGroupExpand(group string, isExpand bool) error {
 }
 
 func (c *CacheFile) LoadRuleSet(tag string) *adapter.SavedBinary {
+	if saved, found := c.loadRuleSetFile(tag); found {
+		return saved
+	}
 	var savedSet adapter.SavedBinary
 	err := c.view(func(t *bbolt.Tx) error {
 		bucket := c.bucket(t, bucketRuleSet)
@@ -462,18 +474,9 @@ func (c *CacheFile) LoadRuleSet(tag string) *adapter.SavedBinary {
 	return &savedSet
 }
 
+// SaveRuleSet keeps the content of a rule set in a file of its own (rule_set_file.go).
 func (c *CacheFile) SaveRuleSet(tag string, set *adapter.SavedBinary) error {
-	return c.batch(func(t *bbolt.Tx) error {
-		bucket, err := c.createBucket(t, bucketRuleSet)
-		if err != nil {
-			return err
-		}
-		setBinary, err := set.MarshalBinary()
-		if err != nil {
-			return err
-		}
-		return bucket.Put([]byte(tag), setBinary)
-	})
+	return c.saveRuleSetFile(tag, set)
 }
 
 func (c *CacheFile) StoreWARPConfig() bool {
@@ -484,68 +487,20 @@ func (c *CacheFile) StoreSubscriptions() bool {
 	return c.storeSubscriptions
 }
 
+// WARP profiles and subscriptions are kept as the rule sets are, by tag, as the bucket of the rule
+// sets was theirs too: the start moves whatever it holds into the files.
 func (c *CacheFile) LoadWARPConfig(tag string) *adapter.SavedBinary {
-	var savedConfig adapter.SavedBinary
-	err := c.DB.View(func(t *bbolt.Tx) error {
-		bucket := c.bucket(t, bucketRuleSet)
-		if bucket == nil {
-			return os.ErrNotExist
-		}
-		configBinary := bucket.Get([]byte(tag))
-		if len(configBinary) == 0 {
-			return os.ErrInvalid
-		}
-		return savedConfig.UnmarshalBinary(configBinary)
-	})
-	if err != nil {
-		return nil
-	}
-	return &savedConfig
+	return c.LoadRuleSet(tag)
 }
 
 func (c *CacheFile) SaveWARPConfig(tag string, set *adapter.SavedBinary) error {
-	return c.DB.Batch(func(t *bbolt.Tx) error {
-		bucket, err := c.createBucket(t, bucketRuleSet)
-		if err != nil {
-			return err
-		}
-		configBinary, err := set.MarshalBinary()
-		if err != nil {
-			return err
-		}
-		return bucket.Put([]byte(tag), configBinary)
-	})
+	return c.SaveRuleSet(tag, set)
 }
 
 func (c *CacheFile) LoadSubscription(tag string) *adapter.SavedBinary {
-	var savedSet adapter.SavedBinary
-	err := c.DB.View(func(t *bbolt.Tx) error {
-		bucket := c.bucket(t, bucketRuleSet)
-		if bucket == nil {
-			return os.ErrNotExist
-		}
-		setBinary := bucket.Get([]byte(tag))
-		if len(setBinary) == 0 {
-			return os.ErrInvalid
-		}
-		return savedSet.UnmarshalBinary(setBinary)
-	})
-	if err != nil {
-		return nil
-	}
-	return &savedSet
+	return c.LoadRuleSet(tag)
 }
 
 func (c *CacheFile) SaveSubscription(tag string, sub *adapter.SavedBinary) error {
-	return c.DB.Batch(func(t *bbolt.Tx) error {
-		bucket, err := c.createBucket(t, bucketRuleSet)
-		if err != nil {
-			return err
-		}
-		setBinary, err := sub.MarshalBinary()
-		if err != nil {
-			return err
-		}
-		return bucket.Put([]byte(tag), setBinary)
-	})
+	return c.SaveRuleSet(tag, sub)
 }
