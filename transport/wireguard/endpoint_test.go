@@ -16,6 +16,22 @@ func TestAmneziaIPCSerialization(t *testing.T) {
 	}
 }
 
+func TestDefaultMTUMakesRoomForTransportPadding(t *testing.T) {
+	for _, test := range []struct {
+		amnezia *AmneziaOptions
+		mtu     uint32
+	}{
+		{nil, 1408},
+		{&AmneziaOptions{S1: 30}, 1408},
+		{&AmneziaOptions{S4: 27}, 1381},
+		{&AmneziaOptions{S4: 500}, 1280},
+	} {
+		if mtu := defaultMTU(test.amnezia); mtu != test.mtu {
+			t.Fatalf("default MTU with %+v: %d, want %d", test.amnezia, mtu, test.mtu)
+		}
+	}
+}
+
 func TestAmneziaHeaderProtectionKeyLength(t *testing.T) {
 	_, err := NewEndpoint(EndpointOptions{
 		PrivateKey: base64.StdEncoding.EncodeToString(make([]byte, 32)),

@@ -44,6 +44,16 @@ type Endpoint struct {
 	stateAccess    sync.Mutex
 }
 
+// defaultMTU leaves room for the S4 padding AmneziaWG adds to every data packet, so that a full one
+// leaves no larger than plain WireGuard's; IPv6 inside the tunnel needs at least 1280.
+func defaultMTU(amnezia *AmneziaOptions) uint32 {
+	const plain = 1408
+	if amnezia == nil || amnezia.S4 <= 0 {
+		return plain
+	}
+	return uint32(max(plain-amnezia.S4, 1280))
+}
+
 func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 	if options.PrivateKey == "" {
 		return nil, E.New("missing private key")
@@ -114,7 +124,7 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 	}
 	allowedAddresses := allowedIPSet.Prefixes()
 	if options.MTU == 0 {
-		options.MTU = 1408
+		options.MTU = defaultMTU(options.Amnezia)
 	}
 	deviceOptions := DeviceOptions{
 		Context:         options.Context,
