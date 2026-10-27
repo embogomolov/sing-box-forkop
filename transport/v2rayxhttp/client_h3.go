@@ -219,6 +219,31 @@ func (l *http3Lanes) Close() error {
 	return nil
 }
 
+// CloseIdleConnections closes the lanes no request is on, with every connection they dialed: quic-go's
+// own counts a request only until its response comes, and would close a connection under a download.
+func (l *http3Lanes) CloseIdleConnections() {
+	l.access.Lock()
+	var idle []*http3Lane
+	var conns []map[*quic.Conn]struct{}
+	l.lanes = slices.DeleteFunc(l.lanes, func(lane *http3Lane) bool {
+		if lane.requests > 0 {
+			return false
+		}
+		lane.closed = true
+		if lane.idle != nil {
+			lane.idle.Stop()
+		}
+		idle = append(idle, lane)
+		conns = append(conns, lane.conns)
+		lane.conns = nil
+		return true
+	})
+	l.access.Unlock()
+	for i, lane := range idle {
+		lane.close(conns[i])
+	}
+}
+
 // close closes a lane taken out of service and every connection it dialed.
 func (lane *http3Lane) close(conns map[*quic.Conn]struct{}) {
 	lane.transport.Close()

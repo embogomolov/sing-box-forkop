@@ -33,6 +33,8 @@ func (r *requestRecorder) IsClosed() bool { return false }
 
 func (r *requestRecorder) Close() {}
 
+func (r *requestRecorder) CloseIdleConnections() {}
+
 func (r *requestRecorder) OpenStream(ctx context.Context, url string, sessionId string, body io.Reader, uploadOnly bool) (io.ReadCloser, net.Addr, net.Addr, error) {
 	switch {
 	case body == nil:

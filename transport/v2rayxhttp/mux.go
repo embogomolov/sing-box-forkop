@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"math"
 	"math/big"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +16,8 @@ import (
 type XmuxConn interface {
 	Close()
 	IsClosed() bool
+	// CloseIdleConnections closes the connections no request is on.
+	CloseIdleConnections()
 }
 
 type XmuxClient struct {
@@ -78,6 +81,15 @@ func (m *XmuxManager) Close() {
 		xmuxClient.Close()
 	}
 	m.xmuxClients = m.xmuxClients[:0]
+}
+
+func (m *XmuxManager) CloseIdleConnections() {
+	m.mtx.Lock()
+	xmuxClients := slices.Clone(m.xmuxClients)
+	m.mtx.Unlock()
+	for _, xmuxClient := range xmuxClients {
+		xmuxClient.XmuxConn.CloseIdleConnections()
+	}
 }
 
 func (m *XmuxManager) newXmuxClient() *XmuxClient {

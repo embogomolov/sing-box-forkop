@@ -25,6 +25,7 @@ import (
 type DialerClient interface {
 	IsClosed() bool
 	Close()
+	CloseIdleConnections()
 
 	// ctx, url, sessionId, body, uploadOnly
 	OpenStream(context.Context, string, string, io.Reader, bool) (io.ReadCloser, net.Addr, net.Addr, error)
@@ -63,6 +64,19 @@ func (c *DefaultDialerClient) fail() {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 	c.failed = true
+}
+
+func (c *DefaultDialerClient) CloseIdleConnections() {
+	c.mtx.RLock()
+	defer c.mtx.RUnlock()
+	c.client.CloseIdleConnections()
+	for {
+		uploadConn, _ := c.uploadRawPool.Get().(*H1Conn)
+		if uploadConn == nil {
+			break
+		}
+		uploadConn.Close()
+	}
 }
 
 func (c *DefaultDialerClient) IsClosed() bool {

@@ -33,7 +33,10 @@ import (
 	"golang.org/x/net/http2"
 )
 
-var _ adapter.V2RayMultiplexClientTransport = (*Client)(nil)
+var (
+	_ adapter.V2RayMultiplexClientTransport = (*Client)(nil)
+	_ adapter.IdleConnectionKeeper          = (*Client)(nil)
+)
 
 // headerUploadSize is a post of upload data carried in headers or cookies when the node sets no size:
 // Xray's megabyte is far over the 8 KiB of headers a server takes, 4 KiB fits beside the padding.
@@ -57,6 +60,7 @@ type Client struct {
 	xmuxManager     *XmuxManager
 	xmuxManager2    *XmuxManager
 	multiplex       bool
+	closeIdle       atomic.Bool
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayXHTTPOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
@@ -155,6 +159,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	}
 	requestURL := c.baseRequestURL
 	requestURL2 := c.baseRequestURL2
+	keepSession := adapter.KeepSessionFromContext(ctx)
 	httpClient, xmuxClient := c.getHTTPClient()
 	httpClient2, xmuxClient2 := c.getHTTPClient2()
 	if xmuxClient != nil {
@@ -183,6 +188,9 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 			}
 			if xmuxClient2 != nil && xmuxClient2 != xmuxClient {
 				xmuxClient2.AddOpenUsage(-1)
+			}
+			if c.closeIdle.Load() && !keepSession {
+				time.AfterFunc(idleCloseDelay, c.CloseIdleConnections)
 			}
 		},
 	}
@@ -307,6 +315,26 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 // MultiplexEnabled reports pooled HTTP/2 and HTTP/3 connections; over HTTP/1.1 a download opens its own.
 func (c *Client) MultiplexEnabled() bool {
 	return c.multiplex
+}
+
+// idleCloseDelay lets the streams of a session end before its connection is closed as idle: a close
+// cancels the requests first, and Go's HTTP/2 client then ends their streams on goroutines of its own.
+const idleCloseDelay = time.Second
+
+// SetKeepIdleConnections(false) comes from the reference manager when nothing references the outbound
+// any more: its idle connections close, at once and after each session, as those of other transports.
+func (c *Client) SetKeepIdleConnections(keep bool) {
+	c.closeIdle.Store(!keep)
+	if !keep {
+		c.CloseIdleConnections()
+	}
+}
+
+func (c *Client) CloseIdleConnections() {
+	c.xmuxManager.CloseIdleConnections()
+	if c.xmuxManager2 != nil {
+		c.xmuxManager2.CloseIdleConnections()
+	}
 }
 
 func (c *Client) Close() error {
