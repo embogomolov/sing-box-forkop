@@ -49,8 +49,8 @@ fi
 : "${SOURCE_DATE_EPOCH:=$(git -C "$PROJECT" log -1 --format=%ct)}"
 
 case "$VARIANT" in
-  base|full|tiny) DESCRIPTION="sing-box for Forkop, $VARIANT build." ;;
-  *) DESCRIPTION="sing-box for Forkop, custom build." ;;
+  base|full|tiny) DESCRIPTION="sing-box for Forkop, $VARIANT build" ;;
+  *) DESCRIPTION="sing-box for Forkop, custom build" ;;
 esac
 ASSET="$OUTPUT/${PACKAGE}_${VERSION}_${VARIANT}_${ARCHITECTURE}"
 
