@@ -35,7 +35,7 @@
 | `with_anytls` | AnyTLS | | ✓ | ✓ |
 | `with_tailscale` | Tailscale | | | ✓ |
 | `with_openconnect` | OpenConnect | | | ✓ |
-| `with_naive` | NaiveProxy, клиент и сервер | | | ✓¹ |
+| `with_naive` | NaiveProxy, клиент и сервер | | | ✓ |
 | `with_mieru` | mieru | | | ✓ |
 | `with_snell`, `with_ssh`, `with_shadowtls`, `with_tor` | Snell, SSH, ShadowTLS, Tor | | | ✓ |
 
