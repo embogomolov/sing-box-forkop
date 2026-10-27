@@ -357,12 +357,13 @@ func TestClientBindClosesIdleSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer packetConn.Close()
-	sendThrough(t, packetConn)
 	deadline := time.Now().Add(8 * time.Second)
 	for !handshakeCompleted(client) {
 		if time.Now().After(deadline) {
 			t.Fatal("the handshake through the proxy did not complete")
 		}
+		// the device comes up after Start returns and drops a packet that reaches it before
+		sendThrough(t, packetConn)
 		time.Sleep(50 * time.Millisecond)
 	}
 	time.Sleep(2 * connectionIdleTimeout)
