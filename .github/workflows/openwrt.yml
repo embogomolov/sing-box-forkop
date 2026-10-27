@@ -106,7 +106,8 @@ jobs:
       - name: Install apk-tools
         run: |
           set -euo pipefail
-          docker run --rm -v /usr/local/bin:/mnt alpine:3.22 sh -c \
+          # apk mkpkg is apk-tools 3, which Alpine ships from 3.23 on
+          docker run --rm -v /usr/local/bin:/mnt alpine:3.24 sh -c \
             "apk add --no-cache apk-tools-static && cp /sbin/apk.static /mnt/apk && chmod +x /mnt/apk"
           apk --version
 
