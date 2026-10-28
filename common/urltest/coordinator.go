@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
 )
 
@@ -47,6 +48,28 @@ func NewCoordinator() *Coordinator {
 		checks:    make(map[coordinatorKey]*coordinatorCheck),
 		lastPrune: time.Now(),
 	}
+}
+
+// CheckURLs requires every URL to pass within one timeout and returns the worst delay.
+func (c *Coordinator) CheckURLs(ctx context.Context, links []string, expectedStatus ExpectedStatus, tag string, detour N.Dialer, timeout time.Duration, maxAge time.Duration) (uint16, time.Time, error) {
+	if len(links) == 0 {
+		links = []string{""}
+	}
+	testCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var worst uint16
+	var oldest time.Time
+	for _, link := range links {
+		delay, at, err := c.Check(testCtx, link, expectedStatus, tag, detour, timeout, maxAge)
+		if err != nil {
+			return 0, at, E.Cause(err, "test URL ", link)
+		}
+		worst = max(worst, delay)
+		if oldest.IsZero() || at.Before(oldest) {
+			oldest = at
+		}
+	}
+	return worst, oldest, nil
 }
 
 // Check runs a URL test for tag with the given timeout, unless an identical

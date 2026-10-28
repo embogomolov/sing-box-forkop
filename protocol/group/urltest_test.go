@@ -24,11 +24,11 @@ import (
 func TestURLTestGroupHistoryIsIsolated(t *testing.T) {
 	sharedHistory := urltest.NewHistoryStorage()
 	ctx := service.ContextWithPtr(context.Background(), sharedHistory)
-	first, err := NewURLTestGroup(ctx, nil, nil, nil, "", nil, 0, 0, 0, false)
+	first, err := NewURLTestGroup(ctx, nil, nil, nil, nil, nil, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewURLTestGroup(ctx, nil, nil, nil, "", nil, 0, 0, 0, false)
+	second, err := NewURLTestGroup(ctx, nil, nil, nil, nil, nil, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestURLTestGroupUsesExpectedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{node}, "http://health.test/generate_204", rejected, 0, 0, 0, false)
+	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{node}, []string{"http://health.test/generate_204"}, rejected, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +73,40 @@ func TestURLTestGroupUsesExpectedStatus(t *testing.T) {
 	}
 }
 
+type partialURLTestOutbound struct {
+	*fallbackHealthTestOutbound
+}
+
+func (o *partialURLTestOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if destination.Fqdn == "second.test" {
+		return nil, errors.New("second target unavailable")
+	}
+	return o.fallbackHealthTestOutbound.DialContext(ctx, network, destination)
+}
+
+func TestURLTestMultipleURLsRequireEveryTarget(t *testing.T) {
+	partial := &partialURLTestOutbound{newFallbackHealthTestOutbound("partial", true)}
+	working := newFallbackHealthTestOutbound("working", true)
+	manager := &testOutboundManager{outbounds: map[string]adapter.Outbound{partial.Tag(): partial, working.Tag(): working}}
+	links := []string{"http://first.test", "http://second.test"}
+	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{partial, working}, links, nil, 0, 0, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := group.URLTest(context.Background())
+	if err != nil || len(result) != 1 || result[working.Tag()] == 0 {
+		t.Fatalf("a member that failed one target was accepted: %v, %v", result, err)
+	}
+	group.sharedHistory.StoreURLTestHistory(partial.Tag(), &adapter.URLTestHistory{Delay: 1})
+	if selected, ok := group.Select(N.NetworkTCP); !ok || selected != working {
+		t.Fatalf("a single-URL probe changed multi-URL eligibility: %v", selected)
+	}
+	multi := &URLTest{link: links, group: group}
+	if history := LoadURLTestHistory(group.sharedHistory, multi); history == nil || history.Delay != result[working.Tag()] {
+		t.Fatalf("dashboard lost the group's aggregate result: %v", history)
+	}
+}
+
 type urlTestWarningLogger struct {
 	log.ContextLogger
 	warnings int
@@ -85,7 +119,7 @@ func TestURLTestReportsAnUpdateThatLeftNoMembers(t *testing.T) {
 	manager := &testOutboundManager{outbounds: map[string]adapter.Outbound{node.Tag(): node}}
 	provider := &testProvider{tag: "provider", outbounds: []adapter.Outbound{node}}
 	logger := &urlTestWarningLogger{ContextLogger: log.NewNOPFactory().NewLogger("test")}
-	group, err := NewURLTestGroup(context.Background(), manager, logger, nil, "", nil, 0, 0, 0, false)
+	group, err := NewURLTestGroup(context.Background(), manager, logger, nil, nil, nil, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +164,7 @@ func TestURLTestReportsAnUpdateThatLeftNoMembers(t *testing.T) {
 func TestURLTestGroupTickRetestsTheResultOfThePreviousTick(t *testing.T) {
 	node := newFallbackHealthTestOutbound("node", true)
 	manager := &testOutboundManager{outbounds: map[string]adapter.Outbound{node.Tag(): node}}
-	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{node}, "http://health.test/generate_204", nil, time.Minute, 0, 0, false)
+	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{node}, []string{"http://health.test/generate_204"}, nil, time.Minute, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +188,7 @@ func TestURLTestGroupPressDoesNotWaitForAScheduledCheck(t *testing.T) {
 	}
 	fast := newFallbackHealthTestOutbound("fast", true)
 	manager := &testOutboundManager{outbounds: map[string]adapter.Outbound{slow.Tag(): slow, fast.Tag(): fast}}
-	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{slow, fast}, "http://health.test/generate_204", nil, 0, 0, 0, false)
+	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{slow, fast}, []string{"http://health.test/generate_204"}, nil, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +217,7 @@ func TestURLTestGroupPressThatRanOutOfTimeStillSelects(t *testing.T) {
 		started: make(chan struct{}),
 	}
 	manager := &testOutboundManager{outbounds: map[string]adapter.Outbound{first.Tag(): first, second.Tag(): second, slow.Tag(): slow}}
-	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{first, second, slow}, "http://health.test/generate_204", nil, 0, 0, 0, false)
+	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{first, second, slow}, []string{"http://health.test/generate_204"}, nil, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +255,7 @@ func TestURLTestGroupKeepsHistoryOfMembersItCouldNotReach(t *testing.T) {
 		manager,
 		log.NewNOPFactory().NewLogger("test"),
 		[]adapter.Outbound{node},
-		"http://health.test/generate_204",
+		[]string{"http://health.test/generate_204"},
 		nil, 0, 0, 0, false,
 	)
 	if err != nil {
@@ -260,7 +294,7 @@ func newDialTestURLTest(t *testing.T, outbounds ...adapter.Outbound) *URLTest {
 		manager.outbounds[detour.Tag()] = detour
 	}
 	logger := log.NewNOPFactory().NewLogger("test")
-	group, err := NewURLTestGroup(context.Background(), manager, logger, outbounds, "http://health.test/generate_204", nil, time.Hour, 0, time.Hour, false)
+	group, err := NewURLTestGroup(context.Background(), manager, logger, outbounds, []string{"http://health.test/generate_204"}, nil, time.Hour, 0, time.Hour, false)
 	if err != nil {
 		t.Fatal(err)
 	}

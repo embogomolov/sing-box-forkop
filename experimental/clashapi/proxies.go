@@ -98,7 +98,7 @@ func proxyInfo(server *Server, detour adapter.Outbound) *badjson.JSONObject {
 	info.Put("type", clashType)
 	info.Put("name", detour.Tag())
 	info.Put("udp", common.Contains(detour.Network(), N.NetworkUDP))
-	delayHistory := server.urlTestHistory.LoadURLTestHistory(group.RealTag(detour, N.NetworkTCP))
+	delayHistory := group.LoadURLTestHistory(server.urlTestHistory, detour)
 	if delayHistory != nil {
 		info.Put("history", []*adapter.URLTestHistory{delayHistory})
 	} else {
@@ -263,6 +263,20 @@ func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request) 
 		proxy := r.Context().Value(CtxKeyProxy).(adapter.Outbound)
 		ctx, cancel := context.WithTimeout(server.ctx, time.Millisecond*time.Duration(timeout))
 		defer cancel()
+		if multi, ok := proxy.(*group.URLTest); ok && multi.IsMultiURL() {
+			_, err = multi.URLTest(ctx)
+			history := group.LoadURLTestHistory(server.urlTestHistory, proxy)
+			if ctx.Err() != nil || err != nil {
+				render.Status(r, http.StatusGatewayTimeout)
+				render.JSON(w, r, ErrRequestTimeout)
+			} else if history == nil {
+				render.Status(r, http.StatusServiceUnavailable)
+				render.JSON(w, r, newError("No outbound passed all URL tests"))
+			} else {
+				render.JSON(w, r, render.M{"delay": history.Delay})
+			}
+			return
+		}
 
 		delay, err := urltest.URLTest(ctx, url, proxy)
 		defer func() {

@@ -10,12 +10,12 @@ type SelectorOutboundOptions struct {
 
 type URLTestOutboundOptions struct {
 	GroupCommonOption
-	URL                       string             `json:"url,omitempty"`
-	ExpectedStatus            string             `json:"expected_status,omitempty"`
-	Interval                  badoption.Duration `json:"interval,omitempty"`
-	Tolerance                 uint16             `json:"tolerance,omitempty"`
-	IdleTimeout               badoption.Duration `json:"idle_timeout,omitempty"`
-	InterruptExistConnections bool               `json:"interrupt_exist_connections,omitempty"`
+	URL                       badoption.Listable[string] `json:"url,omitempty"`
+	ExpectedStatus            string                     `json:"expected_status,omitempty"`
+	Interval                  badoption.Duration         `json:"interval,omitempty"`
+	Tolerance                 uint16                     `json:"tolerance,omitempty"`
+	IdleTimeout               badoption.Duration         `json:"idle_timeout,omitempty"`
+	InterruptExistConnections bool                       `json:"interrupt_exist_connections,omitempty"`
 }
 
 type FallbackOutboundOptions struct {

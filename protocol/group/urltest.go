@@ -5,6 +5,7 @@ import (
 	"io"
 	"maps"
 	"net"
+	"net/url"
 	"regexp"
 	"slices"
 	"sync"
@@ -43,7 +44,7 @@ type URLTest struct {
 	outbound                     adapter.OutboundManager
 	logger                       log.ContextLogger
 	tags                         []string
-	link                         string
+	link                         []string
 	expectedStatus               urltest.ExpectedStatus
 	interval                     time.Duration
 	tolerance                    uint16
@@ -229,6 +230,28 @@ func (s *URLTest) URLTest(ctx context.Context) (map[string]uint16, error) {
 	return s.group.URLTest(ctx)
 }
 
+func (s *URLTest) IsMultiURL() bool {
+	return len(s.link) > 1
+}
+
+func LoadURLTestHistory(history *urltest.HistoryStorage, detour adapter.Outbound) *adapter.URLTestHistory {
+	for detour != nil {
+		if multi, ok := detour.(*URLTest); ok && multi.IsMultiURL() && multi.group != nil {
+			selected := multi.Selected(N.NetworkTCP)
+			if selected == nil {
+				return nil
+			}
+			return multi.group.history.LoadURLTestHistory(MemberTag(selected))
+		}
+		group, ok := detour.(adapter.OutboundGroup)
+		if !ok {
+			return history.LoadURLTestHistory(detour.Tag())
+		}
+		detour = group.Selected(N.NetworkTCP)
+	}
+	return nil
+}
+
 func (s *URLTest) CheckOutbounds() {
 	s.group.CheckOutbounds(s.ctx, true)
 }
@@ -388,7 +411,7 @@ type URLTestGroup struct {
 	pauseCallback                *list.Element[pause.Callback]
 	logger                       log.Logger
 	outbounds                    []adapter.Outbound
-	link                         string
+	link                         []string
 	expectedStatus               urltest.ExpectedStatus
 	interval                     time.Duration
 	tolerance                    uint16
@@ -411,7 +434,16 @@ type URLTestGroup struct {
 	failureCheck                 atomic.Bool
 }
 
-func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link string, expectedStatus urltest.ExpectedStatus, interval time.Duration, tolerance uint16, idleTimeout time.Duration, interruptExternalConnections bool) (*URLTestGroup, error) {
+func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link []string, expectedStatus urltest.ExpectedStatus, interval time.Duration, tolerance uint16, idleTimeout time.Duration, interruptExternalConnections bool) (*URLTestGroup, error) {
+	for _, value := range link {
+		if value == "" && len(link) == 1 {
+			continue
+		}
+		parsed, err := url.Parse(value)
+		if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return nil, E.New("invalid URLTest URL: ", value)
+		}
+	}
 	if interval == 0 {
 		interval = C.DefaultURLTestInterval
 	}
@@ -651,7 +683,7 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 			if force {
 				maxAge = 0
 			}
-			t, at, err := g.coordinator.Check(ctx, g.link, g.expectedStatus, realTag, p, C.TCPTimeout, maxAge)
+			t, at, err := g.coordinator.CheckURLs(ctx, g.link, g.expectedStatus, realTag, p, C.TCPTimeout, maxAge)
 			if err != nil && ctx.Err() != nil {
 				// Running out of the caller's time says nothing about the member,
 				// so its history stays.
@@ -711,7 +743,7 @@ func URLTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManag
 	testBatch.test(outbounds, link, interval, force)
 	b.Wait()
 	for _, outboundGroup := range testBatch.groups {
-		groupHistory := history.LoadURLTestHistory(RealTag(outboundGroup, N.NetworkTCP))
+		groupHistory := LoadURLTestHistory(history, outboundGroup)
 		if groupHistory != nil {
 			testBatch.result[outboundGroup.Tag()] = groupHistory.Delay
 		}

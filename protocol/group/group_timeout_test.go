@@ -57,7 +57,7 @@ func TestURLTestGroupAnswersWhileADialIgnoresItsContext(t *testing.T) {
 	node := &contextIgnoringOutbound{Adapter: outboundAdapter.NewAdapter("test", "node", []string{N.NetworkTCP}, nil), release: make(chan struct{})}
 	defer close(node.release)
 	manager := &testOutboundManager{outbounds: map[string]adapter.Outbound{node.Tag(): node}}
-	urlTestGroup, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{node}, "http://health.test/", nil, 0, 0, 0, false)
+	urlTestGroup, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{node}, []string{"http://health.test/"}, nil, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestURLTestGroupSelectsWhileAnInterruptClosesConnections(t *testing.T) {
 	first := newTestOutbound("first")
 	second := newTestOutbound("second")
 	manager := &testOutboundManager{outbounds: map[string]adapter.Outbound{first.Tag(): first, second.Tag(): second}}
-	urlTestGroup, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{first, second}, "", nil, 0, 0, 0, true)
+	urlTestGroup, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{first, second}, nil, nil, 0, 0, 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}

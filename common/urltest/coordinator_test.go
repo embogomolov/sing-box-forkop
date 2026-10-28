@@ -77,6 +77,28 @@ func TestCoordinatorReusesFreshResults(t *testing.T) {
 	}
 }
 
+func TestCoordinatorMultipleURLs(t *testing.T) {
+	coordinator := NewCoordinator()
+	dialer := &coordinatorTestDialer{}
+	links := []string{"http://first.test", "http://second.test"}
+	oldest := time.Now().Add(-time.Second)
+	for i, link := range links {
+		done := make(chan struct{})
+		close(done)
+		coordinator.checks[coordinatorKey{tag: "node", link: link, timeout: time.Second}] = &coordinatorCheck{
+			done: done, at: oldest.Add(time.Duration(i) * time.Millisecond), delay: uint16(10 + 70*i),
+		}
+	}
+	delay, at, err := coordinator.CheckURLs(context.Background(), links, nil, "node", dialer, time.Second, time.Minute)
+	if err != nil || delay != 80 || !at.Equal(oldest) || dialer.dialCount() != 0 {
+		t.Fatalf("unexpected aggregate: delay=%d at=%v error=%v dials=%d", delay, at, err, dialer.dialCount())
+	}
+	coordinator.checks[coordinatorKey{tag: "node", link: links[1], timeout: time.Second}].err = errors.New("unreachable")
+	if _, _, err = coordinator.CheckURLs(context.Background(), links, nil, "node", dialer, time.Second, time.Minute); err == nil {
+		t.Fatal("a failed second URL was accepted")
+	}
+}
+
 func TestCoordinatorCollapsesConcurrentChecks(t *testing.T) {
 	coordinator := NewCoordinator()
 	dialer := &coordinatorTestDialer{block: make(chan struct{})}

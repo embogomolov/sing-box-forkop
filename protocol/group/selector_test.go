@@ -144,7 +144,7 @@ func TestGroupsExcludeProviderOutboundTypes(t *testing.T) {
 		t.Fatalf("selector kept an excluded outbound type: %v", all)
 	}
 
-	urlTestGroup, err := NewURLTestGroup(context.Background(), manager, nopLogger, nil, "", nil, 0, 0, 0, false)
+	urlTestGroup, err := NewURLTestGroup(context.Background(), manager, nopLogger, nil, nil, nil, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestProviderGroupsFailClosedAndRecover(t *testing.T) {
 	}
 
 	nopLogger := log.NewNOPFactory().NewLogger("test")
-	urlTestGroup, err := NewURLTestGroup(context.Background(), manager, nopLogger, nil, "", nil, 0, 0, 0, false)
+	urlTestGroup, err := NewURLTestGroup(context.Background(), manager, nopLogger, nil, nil, nil, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestURLTestProviderRefreshDoesNotWaitForHealthChecks(t *testing.T) {
 	}}
 	provider := &testProvider{tag: "provider", outbounds: []adapter.Outbound{nodeA}}
 	nopLogger := log.NewNOPFactory().NewLogger("test")
-	urlTestGroup, err := NewURLTestGroup(context.Background(), manager, nopLogger, nil, "http://example.com", nil, 0, 0, 0, false)
+	urlTestGroup, err := NewURLTestGroup(context.Background(), manager, nopLogger, nil, []string{"http://example.com"}, nil, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestURLTestInterruptsAfterProviderSelectionChanges(t *testing.T) {
 	oldNode := newTestOutbound("provider/old")
 	newNode := newTestOutbound("provider/new")
 	manager := &testOutboundManager{outbounds: map[string]adapter.Outbound{newNode.Tag(): newNode}}
-	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{newNode}, "", nil, 0, 0, 0, false)
+	group, err := NewURLTestGroup(context.Background(), manager, log.NewNOPFactory().NewLogger("test"), []adapter.Outbound{newNode}, nil, nil, 0, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
