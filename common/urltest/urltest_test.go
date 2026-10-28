@@ -15,9 +15,11 @@ import (
 
 type testDialer struct {
 	address string
+	delay   time.Duration
 }
 
 func (d *testDialer) DialContext(ctx context.Context, network string, _ M.Socksaddr) (net.Conn, error) {
+	time.Sleep(d.delay)
 	return (&net.Dialer{}).DialContext(ctx, network, d.address)
 }
 
@@ -44,6 +46,37 @@ func TestUnifiedDelayRespectsContextDeadline(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed >= 150*time.Millisecond {
 		t.Fatalf("URL test exceeded context deadline: %v", elapsed)
+	}
+}
+
+func TestUnifiedDelayHandlesServerConnectionClose(t *testing.T) {
+	for _, closeConnection := range []bool{false, true} {
+		name := "keep_alive"
+		if closeConnection {
+			name = "connection_close"
+		}
+		t.Run(name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				if closeConnection {
+					w.Header().Set("Connection", "close")
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+			dialer := &testDialer{address: server.Listener.Addr().String(), delay: 150 * time.Millisecond}
+			delay, err := URLTest(ContextWithIsUnifiedDelay(context.Background()), server.URL, dialer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if requests.Load() != 2 {
+				t.Fatalf("expected two HEAD requests, got %d", requests.Load())
+			}
+			if delay >= 100 {
+				t.Fatalf("Unified Delay included the 150 ms dial: %d ms", delay)
+			}
+		})
 	}
 }
 

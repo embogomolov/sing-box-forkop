@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"sync"
 	"time"
@@ -119,6 +120,8 @@ func urlTest(ctx context.Context, link string, detour N.Dialer, expectedStatus E
 		}
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	start := time.Now()
 	instance, err := detour.DialContext(ctx, "tcp", M.ParseSocksaddrHostPortStr(hostname, port))
 	if err != nil {
@@ -132,10 +135,16 @@ func urlTest(ctx context.Context, link string, detour N.Dialer, expectedStatus E
 	if err != nil {
 		return
 	}
+	var dialOnce sync.Once
 	client := http.Client{
 		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return instance, nil
+			DialContext: func(_ context.Context, network, addr string) (conn net.Conn, err error) {
+				dialOnce.Do(func() { conn = instance })
+				if conn != nil {
+					return conn, nil
+				}
+				// Keep the probe deadline when HTTP detaches its dial context.
+				return detour.DialContext(ctx, network, M.ParseSocksaddr(addr))
 			},
 			TLSClientConfig: &tls.Config{
 				Time:    ntp.TimeFuncFromContext(ctx),
@@ -155,7 +164,10 @@ func urlTest(ctx context.Context, link string, detour N.Dialer, expectedStatus E
 	resp.Body.Close()
 	if IsUnifiedDelayFromContext(ctx) {
 		second := time.Now()
-		resp, err = client.Do(req.WithContext(ctx))
+		requestCtx := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+			GotConn: func(httptrace.GotConnInfo) { second = time.Now() },
+		})
+		resp, err = client.Do(req.WithContext(requestCtx))
 		if err != nil {
 			return
 		}
